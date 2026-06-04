@@ -4,6 +4,34 @@ from math import tan, radians, exp
 from modules.hoist import haversine
 from config import WIND_BLOCK, WIND_PENALTY_HIGH
 
+
+def tobler_speed_kmh(slope_deg):
+    """
+    Tobler's Hiking Function — 경사도(deg)에 따른 보행 속도(km/h).
+        W = 6 · exp(-3.5 · |tan(θ) + 0.05|)
+    평지(약간 내리막)에서 최대 ≈ 6 km/h, 경사가 급할수록 지수적으로 감소.
+    """
+    s = tan(radians(slope_deg))
+    return 6.0 * exp(-3.5 * abs(s + 0.05))
+
+
+def estimate_path_time(path, terrain, dem_lats, dem_lons):
+    """
+    Tobler 보행 속도 기반 경로 소요시간(분) 추정. (Stage 3 ETA 산출)
+    각 구간 거리 ÷ 해당 셀 Tobler 속도 를 누적.
+    """
+    if not path or len(path) < 2:
+        return 0.0
+    total_sec = 0.0
+    for i in range(len(path) - 1):
+        r1, c1 = path[i]
+        r2, c2 = path[i + 1]
+        dist_m = haversine(dem_lats[r1, c1], dem_lons[r1, c1],
+                           dem_lats[r2, c2], dem_lons[r2, c2])
+        speed_kmh = max(0.3, tobler_speed_kmh(terrain["slope"][r2, c2]))
+        total_sec += dist_m / (speed_kmh * 1000.0 / 3600.0)
+    return total_sec / 60.0
+
 def get_move_vector(current, neighbor):
     """이동 방향 단위벡터"""
     vec = np.array([neighbor[1] - current[1],
