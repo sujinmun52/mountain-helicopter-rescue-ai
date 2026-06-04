@@ -18,13 +18,15 @@ def get_base_time():
         base = now
     return base.strftime("%Y%m%d"), base.strftime("%H00")
 
-# 설악산 권역 AWS 관측 지점 (기상청 API허브 지점번호 + 실제 위경도)
+# 설악산 권역 AWS 관측 지점 (기상청 API허브 지점번호 + 실제 위경도 + 관측소 표고)
+# elev(관측소 해발고도, m)는 지형 인지형 보간의 수직 이방성 계산에 필수.
+# 특히 대관령(772m)은 고지대 풍황을 대표하는 핵심 앵커 관측소.
 _SEORAK_STATIONS = {
-    90:  {"name": "속초",   "lat": 38.2506, "lon": 128.5644},
-    100: {"name": "대관령", "lat": 37.6764, "lon": 128.7183},
-    105: {"name": "강릉",   "lat": 37.7514, "lon": 128.8908},
-    211: {"name": "인제",   "lat": 38.0606, "lon": 128.1717},
-    212: {"name": "홍천",   "lat": 37.6863, "lon": 127.8883},
+    90:  {"name": "속초",   "lat": 38.2506, "lon": 128.5644, "elev": 18.1},
+    100: {"name": "대관령", "lat": 37.6764, "lon": 128.7183, "elev": 772.4},
+    105: {"name": "강릉",   "lat": 37.7514, "lon": 128.8908, "elev": 26.0},
+    211: {"name": "인제",   "lat": 38.0606, "lon": 128.1717, "elev": 200.2},
+    212: {"name": "홍천",   "lat": 37.6863, "lon": 127.8883, "elev": 140.9},
 }
 
 
@@ -98,10 +100,11 @@ def fetch_kma_realtime(nx_list=None, ny_list=None):
 
             ws, wd = valid
             wind_data[str(stn_id)] = {
-                "ws":  ws,
-                "wd":  wd,
-                "lat": stn_info["lat"],
-                "lon": stn_info["lon"],
+                "ws":   ws,
+                "wd":   wd,
+                "lat":  stn_info["lat"],
+                "lon":  stn_info["lon"],
+                "elev": stn_info["elev"],   # 지형 인지형 보간용 관측소 표고
             }
             print(f"  [수신] {stn_info['name']}({stn_id}): "
                   f"풍속={ws:.1f}m/s 풍향={wd:.0f}°")
