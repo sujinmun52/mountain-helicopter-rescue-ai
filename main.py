@@ -147,8 +147,10 @@ def create_3d_visualization(dem_lats, dem_lons, dem_array, terrain, full_path,
         showlegend=True
     )
     
-    fig.write_html("output_map_3d.html")
-    print("3D 지도 저장: output_map_3d.html")
+    import os
+    os.makedirs("outputs", exist_ok=True)
+    fig.write_html("outputs/output_map_3d.html")
+    print("3D 지도 저장: outputs/output_map_3d.html")
 
 def create_2d_visualization(path, victim_gps, landing_point, wind_field, dem_lats, dem_lons, 
                            path_penalties):
@@ -211,8 +213,10 @@ def create_2d_visualization(path, victim_gps, landing_point, wind_field, dem_lat
         icon=folium.Icon(color="blue", icon="helicopter")
     ).add_to(m)
     
-    m.save("output_map_2d_penalty.html")
-    print("2D 패널티 지도 저장: output_map_2d_penalty.html")
+    import os
+    os.makedirs("outputs", exist_ok=True)
+    m.save("outputs/output_map_2d_penalty.html")
+    print("2D 패널티 지도 저장: outputs/output_map_2d_penalty.html")
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗

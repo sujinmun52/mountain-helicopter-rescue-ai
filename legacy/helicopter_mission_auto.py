@@ -4,7 +4,14 @@
 - 실시간 지형 분석
 - 착륙지점 자동 선정
 - 인터랙티브 지도 생성
+
+[legacy] 메인 파이프라인(main.py)과 별개인 독립 실행 스크립트.
+프로젝트 루트에서 `python legacy/helicopter_mission_auto.py` 로 실행.
 """
+
+import os, sys
+# legacy/ 하위에서도 modules/config 를 찾도록 프로젝트 루트를 import 경로에 추가
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pandas as pd
@@ -308,8 +315,9 @@ def create_interactive_map(dem_lats, dem_lons, dem_array, terrain, full_path,
     
     m.get_root().html.add_child(folium.Element(legend_html))
     
-    m.save("mission_map_interactive.html")
-    print("\n✅ 저장: mission_map_interactive.html")
+    os.makedirs("outputs", exist_ok=True)
+    m.save("outputs/mission_map_interactive.html")
+    print("\n✅ 저장: outputs/mission_map_interactive.html")
 
 def latlon_to_grid(lat, lon, dem_lats, dem_lons):
     """좌표를 격자로 변환"""

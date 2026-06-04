@@ -55,6 +55,8 @@ def render_map(path, victim_gps, landing_point, wind_field, dem_lats, dem_lons):
             tooltip=f"위험풍속: {wind_field['ws'][r,c]:.1f}m/s"
         ).add_to(m)
 
-    m.save("output_map.html")
-    print("지도 저장 완료: output_map.html")
+    import os
+    os.makedirs("outputs", exist_ok=True)
+    m.save("outputs/output_map.html")
+    print("지도 저장 완료: outputs/output_map.html")
     return m

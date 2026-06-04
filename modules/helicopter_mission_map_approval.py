@@ -424,7 +424,9 @@ def create_mission_briefing_html(
     return html
 
 
-def save_mission_map_with_approval(m: folium.Map, filename: str = 'helicopter_mission_with_approval.html'):
+def save_mission_map_with_approval(m: folium.Map, filename: str = 'outputs/helicopter_mission_with_approval.html'):
     """미션 지도 저장"""
+    import os
+    os.makedirs(os.path.dirname(filename) or ".", exist_ok=True)
     m.save(filename)
     print(f"✅ 관제 승인 기능이 있는 미션 지도 저장: {filename}")

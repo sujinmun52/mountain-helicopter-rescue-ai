@@ -444,7 +444,9 @@ def create_vworld_3d_mission_map(full_path, dem_lats, dem_lons, dem_array, path_
 </html>
 """
     
-    with open("helicopter_mission_3d.html", "w", encoding="utf-8") as f:
+    import os
+    os.makedirs("outputs", exist_ok=True)
+    with open("outputs/helicopter_mission_3d.html", "w", encoding="utf-8") as f:
         f.write(html_content)
     
     print("✅ V-World 기반 3D 미션 맵 저장: helicopter_mission_3d.html")

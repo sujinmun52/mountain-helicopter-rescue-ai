@@ -186,7 +186,9 @@ def create_helicopter_mission_folium_map(full_path, dem_lats, dem_lons, dem_arra
     m.get_root().html.add_child(folium.Element(legend_html))
     
     # 지도 저장
-    m.save("helicopter_mission_folium.html")
-    print("✅ Folium 기반 헬기 미션 지도 저장: helicopter_mission_folium.html")
-    
-    return "helicopter_mission_folium.html"
+    import os
+    os.makedirs("outputs", exist_ok=True)
+    m.save("outputs/helicopter_mission_folium.html")
+    print("✅ Folium 기반 헬기 미션 지도 저장: outputs/helicopter_mission_folium.html")
+
+    return "outputs/helicopter_mission_folium.html"
