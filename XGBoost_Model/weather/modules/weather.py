@@ -3,7 +3,7 @@ import numpy as np
 import requests
 from datetime import datetime, timedelta
 from scipy.interpolate import griddata
-from config import KMA_API_KEY, SEORAK_LAT_MIN, SEORAK_LAT_MAX, SEORAK_LON_MIN, SEORAK_LON_MAX
+from weather.config import KMA_API_KEY, SEORAK_LAT_MIN, SEORAK_LAT_MAX, SEORAK_LON_MIN, SEORAK_LON_MAX
 
 def floor_to_5min(dt):
     """API 격자 생산 주기에 맞춰 5분 단위 내림"""

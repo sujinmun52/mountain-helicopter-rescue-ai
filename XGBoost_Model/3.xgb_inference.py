@@ -51,10 +51,11 @@ print("해당 기체 전용 신규 가중치 기반 XGBoost 듀얼 AI 추론 엔
 # [STEP 2] 마스터 데이터 및 신규 피처 대응 구조 모델 로드
 # ==============================================================================
 print("데이터 매트릭스 및 XGBoost 모델 인프라 로드 중")
-df_master = pd.read_csv(r'RF_Model\dataset\processed_seoraksan_master.csv')
+_DIR      = os.path.dirname(os.path.abspath(__file__))
+df_master = pd.read_parquet(os.path.join(_DIR, 'dataset', 'terrain_base.parquet'))
 
 def load_xgb_model(model_key: str, tactic: str) -> xgb.Booster:
-    path = fr'RF_Model\xgb_{model_key}_{tactic}_model.ubj'
+    path = os.path.join(_DIR, 'models', f'xgb_{model_key}_{tactic}_model.ubj')
     booster = xgb.Booster()
     booster.load_model(path)
     booster.set_param({"device": "cuda"})  # GPU 실시간 추론 바인딩
