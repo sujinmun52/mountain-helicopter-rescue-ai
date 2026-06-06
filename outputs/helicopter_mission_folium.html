@@ -1,0 +1,1004 @@
+<!DOCTYPE html>
+<html>
+<head>
+    
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js"></script>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/css/bootstrap.min.css"/>
+    <link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.0/css/bootstrap-glyphicons.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.2.0/css/all.min.css"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/python-visualization/folium/folium/templates/leaflet.awesome.rotate.min.css"/>
+    
+            <meta name="viewport" content="width=device-width,
+                initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+            <style>
+                #map_5aad32f0127619c3538607422dd83037 {
+                    position: relative;
+                    width: 100.0%;
+                    height: 100.0%;
+                    left: 0.0%;
+                    top: 0.0%;
+                }
+                .leaflet-container { font-size: 1rem; }
+            </style>
+
+            <style>html, body {
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+            }
+            </style>
+
+            <style>#map {
+                position:absolute;
+                top:0;
+                bottom:0;
+                right:0;
+                left:0;
+                }
+            </style>
+
+            <script>
+                L_NO_TOUCH = false;
+                L_DISABLE_3D = false;
+            </script>
+
+        
+</head>
+<body>
+    
+    
+    <div style="position: fixed; 
+                bottom: 50px; right: 50px; width: 320px; height: auto;
+                background-color: white; border:2px solid grey; z-index:9999; 
+                font-size:14px; padding: 15px; border-radius: 8px;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+        <div style="font-weight: bold; margin-bottom: 10px; color: #ff6b35; font-size: 16px;">
+            🚁 미션 브리핑
+        </div>
+        
+        <div style="margin: 8px 0; padding: 8px; background: #f0f0f0; border-radius: 4px; font-size: 12px;">
+            <b>경로 통계</b><br>
+            • 총 거리: 14.97km<br>
+            • 포인트 수: 31<br>
+            • 평균 경사도: 54.6°<br>
+            • 최대 풍속: 1.7m/s<br>
+        </div>
+        
+        <div style="margin: 8px 0; padding: 8px; background: #f0f0f0; border-radius: 4px; font-size: 12px;">
+            <b>거리</b><br>
+            • 119→착륙: 14.84km<br>
+            • 착륙→조난자: 0.06km<br>
+        </div>
+        
+        <div style="margin: 8px 0; padding: 8px; background: #f0f0f0; border-radius: 4px; font-size: 12px;">
+            <b>고도</b><br>
+            • 조난자: 678m<br>
+            • 착륙지: 1635m<br>
+            • 고도 차: 957m<br>
+        </div>
+        
+        <div style="margin: 8px 0; padding: 8px; background: #fff8e1; border-left: 4px solid #ff6b35; border-radius: 4px; font-size: 11px;">
+            <b>⚠️ 주의사항</b><br>
+            • 조난자 위치 경사도: 68.8°<br>
+            • 능선상 위치 (강풍)<br>
+            • 호이스트 시간: ~15분
+        </div>
+        
+        <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd; font-size: 11px; color: #666;">
+            <b>색상 범례</b><br>
+            <span style="display: inline-block; width: 12px; height: 12px; background: #22c55e; border-radius: 2px;"></span> 안전 (낮은 패널티)<br>
+            <span style="display: inline-block; width: 12px; height: 12px; background: #eab308; border-radius: 2px;"></span> 주의 (중간 패널티)<br>
+            <span style="display: inline-block; width: 12px; height: 12px; background: #ef4444; border-radius: 2px;"></span> 위험 (높은 패널티)
+        </div>
+    </div>
+    
+    
+            <div class="folium-map" id="map_5aad32f0127619c3538607422dd83037" ></div>
+        
+</body>
+<script>
+    
+    
+            var map_5aad32f0127619c3538607422dd83037 = L.map(
+                "map_5aad32f0127619c3538607422dd83037",
+                {
+                    center: [38.1192, 128.4652],
+                    crs: L.CRS.EPSG3857,
+                    ...{
+  "zoom": 13,
+  "zoomControl": true,
+  "preferCanvas": false,
+}
+
+                }
+            );
+
+            
+
+        
+    
+            var tile_layer_d9300136ab7a6865e8f6984346c3da02 = L.tileLayer(
+                "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                {
+  "minZoom": 0,
+  "maxZoom": 19,
+  "maxNativeZoom": 19,
+  "noWrap": false,
+  "attribution": "\u0026copy; \u003ca href=\"https://www.openstreetmap.org/copyright\"\u003eOpenStreetMap\u003c/a\u003e contributors",
+  "subdomains": "abc",
+  "detectRetina": false,
+  "tms": false,
+  "opacity": 1,
+}
+
+            );
+        
+    
+            tile_layer_d9300136ab7a6865e8f6984346c3da02.addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+            var poly_line_6fb342e7f27995b60bfabfc3edf3e972 = L.polyline(
+                [[38.25005, 128.49992], [38.245027889447236, 128.49806432160804]],
+                {"bubblingMouseEvents": true, "color": "#22c55e", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#22c55e", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 2}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_f7cfd25cb09a9ef178907c3e6f0c533f = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_3e795950ea6235f9f9a155ebfc8fab74 = $(`<div id="html_3e795950ea6235f9f9a155ebfc8fab74" style="width: 100.0%; height: 100.0%;">지점 1<br>경사도: 0.0°<br>풍속: 1.4m/s</div>`)[0];
+                popup_f7cfd25cb09a9ef178907c3e6f0c533f.setContent(html_3e795950ea6235f9f9a155ebfc8fab74);
+            
+        
+
+        poly_line_6fb342e7f27995b60bfabfc3edf3e972.bindPopup(popup_f7cfd25cb09a9ef178907c3e6f0c533f)
+        ;
+
+        
+    
+    
+            var poly_line_13fb29e229c9915ddaaf4ddc308b8f3e = L.polyline(
+                [[38.245027889447236, 128.49806432160804], [38.24000577889447, 128.49713648241206]],
+                {"bubblingMouseEvents": true, "color": "#eab308", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#eab308", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_a89619d753f58087c79e85ef2f6aefbe = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_248b7965ff255f805b07cb2367d92fa9 = $(`<div id="html_248b7965ff255f805b07cb2367d92fa9" style="width: 100.0%; height: 100.0%;">지점 2<br>경사도: 52.9°<br>풍속: 0.6m/s</div>`)[0];
+                popup_a89619d753f58087c79e85ef2f6aefbe.setContent(html_248b7965ff255f805b07cb2367d92fa9);
+            
+        
+
+        poly_line_13fb29e229c9915ddaaf4ddc308b8f3e.bindPopup(popup_a89619d753f58087c79e85ef2f6aefbe)
+        ;
+
+        
+    
+    
+            var poly_line_58af741fff932c57db647674d793a6ac = L.polyline(
+                [[38.24000577889447, 128.49713648241206], [38.2362391959799, 128.49620864321608]],
+                {"bubblingMouseEvents": true, "color": "#eab308", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#eab308", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_a61cbbe75e55290f80c97a25f5503eee = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_c6ca6d1c931d6af67557ff12f2d973cf = $(`<div id="html_c6ca6d1c931d6af67557ff12f2d973cf" style="width: 100.0%; height: 100.0%;">지점 3<br>경사도: 46.3°<br>풍속: 0.6m/s</div>`)[0];
+                popup_a61cbbe75e55290f80c97a25f5503eee.setContent(html_c6ca6d1c931d6af67557ff12f2d973cf);
+            
+        
+
+        poly_line_58af741fff932c57db647674d793a6ac.bindPopup(popup_a61cbbe75e55290f80c97a25f5503eee)
+        ;
+
+        
+    
+    
+            var poly_line_78690ece36fcd7b6015e94aa124180f1 = L.polyline(
+                [[38.2362391959799, 128.49620864321608], [38.23121708542714, 128.49435296482412]],
+                {"bubblingMouseEvents": true, "color": "#eab308", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#eab308", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_9b254c26b574d6ac8349ebbdd68ec220 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_1da9ecc87dc1c183823b628623fa3f9c = $(`<div id="html_1da9ecc87dc1c183823b628623fa3f9c" style="width: 100.0%; height: 100.0%;">지점 4<br>경사도: 34.2°<br>풍속: 0.5m/s</div>`)[0];
+                popup_9b254c26b574d6ac8349ebbdd68ec220.setContent(html_1da9ecc87dc1c183823b628623fa3f9c);
+            
+        
+
+        poly_line_78690ece36fcd7b6015e94aa124180f1.bindPopup(popup_9b254c26b574d6ac8349ebbdd68ec220)
+        ;
+
+        
+    
+    
+            var poly_line_1c57d892516d1dd19954c6fa3807404a = L.polyline(
+                [[38.23121708542714, 128.49435296482412], [38.22745050251257, 128.49342512562814]],
+                {"bubblingMouseEvents": true, "color": "#eab308", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#eab308", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_caa0a0a92f3815eb483d4971927b156b = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_72330c440347238817166954aa69764a = $(`<div id="html_72330c440347238817166954aa69764a" style="width: 100.0%; height: 100.0%;">지점 5<br>경사도: 22.3°<br>풍속: 0.5m/s</div>`)[0];
+                popup_caa0a0a92f3815eb483d4971927b156b.setContent(html_72330c440347238817166954aa69764a);
+            
+        
+
+        poly_line_1c57d892516d1dd19954c6fa3807404a.bindPopup(popup_caa0a0a92f3815eb483d4971927b156b)
+        ;
+
+        
+    
+    
+            var poly_line_5be95c84e2f6e0e34f35c2582b8177d1 = L.polyline(
+                [[38.22745050251257, 128.49342512562814], [38.2224283919598, 128.49249728643215]],
+                {"bubblingMouseEvents": true, "color": "#eab308", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#eab308", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_22167fb3634c2bdc7d64e9e53b9d6321 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_7be399802bbfa808d2ae03bb672d1f35 = $(`<div id="html_7be399802bbfa808d2ae03bb672d1f35" style="width: 100.0%; height: 100.0%;">지점 6<br>경사도: 22.7°<br>풍속: 0.5m/s</div>`)[0];
+                popup_22167fb3634c2bdc7d64e9e53b9d6321.setContent(html_7be399802bbfa808d2ae03bb672d1f35);
+            
+        
+
+        poly_line_5be95c84e2f6e0e34f35c2582b8177d1.bindPopup(popup_22167fb3634c2bdc7d64e9e53b9d6321)
+        ;
+
+        
+    
+    
+            var poly_line_aef66fcd8f3a56ce9fc815e2628ecb40 = L.polyline(
+                [[38.2224283919598, 128.49249728643215], [38.21740628140704, 128.4906416080402]],
+                {"bubblingMouseEvents": true, "color": "#eab308", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#eab308", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_f9bbcbc413f42eeba961ab66abab5337 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_06b55fc1e69214b7996d1cb457027584 = $(`<div id="html_06b55fc1e69214b7996d1cb457027584" style="width: 100.0%; height: 100.0%;">지점 7<br>경사도: 11.4°<br>풍속: 0.5m/s</div>`)[0];
+                popup_f9bbcbc413f42eeba961ab66abab5337.setContent(html_06b55fc1e69214b7996d1cb457027584);
+            
+        
+
+        poly_line_aef66fcd8f3a56ce9fc815e2628ecb40.bindPopup(popup_f9bbcbc413f42eeba961ab66abab5337)
+        ;
+
+        
+    
+    
+            var poly_line_14c7d213cfde901dfdd66bfd236d1f20 = L.polyline(
+                [[38.21740628140704, 128.4906416080402], [38.213639698492464, 128.4897137688442]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_e5dae42e2cebbfaec1c1b8a3a0f761b3 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_613fee34ce8e4ccc15e875573379fa5b = $(`<div id="html_613fee34ce8e4ccc15e875573379fa5b" style="width: 100.0%; height: 100.0%;">지점 8<br>경사도: 57.7°<br>풍속: 0.5m/s</div>`)[0];
+                popup_e5dae42e2cebbfaec1c1b8a3a0f761b3.setContent(html_613fee34ce8e4ccc15e875573379fa5b);
+            
+        
+
+        poly_line_14c7d213cfde901dfdd66bfd236d1f20.bindPopup(popup_e5dae42e2cebbfaec1c1b8a3a0f761b3)
+        ;
+
+        
+    
+    
+            var poly_line_856afd9aeea7e248c87faaf162afd9d6 = L.polyline(
+                [[38.213639698492464, 128.4897137688442], [38.2086175879397, 128.48878592964823]],
+                {"bubblingMouseEvents": true, "color": "#eab308", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#eab308", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_51eea31604f53c4eb3a98ea7aa1a0166 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_c2eff79c7ed464341dffdd0e88ca05ed = $(`<div id="html_c2eff79c7ed464341dffdd0e88ca05ed" style="width: 100.0%; height: 100.0%;">지점 9<br>경사도: 51.9°<br>풍속: 0.5m/s</div>`)[0];
+                popup_51eea31604f53c4eb3a98ea7aa1a0166.setContent(html_c2eff79c7ed464341dffdd0e88ca05ed);
+            
+        
+
+        poly_line_856afd9aeea7e248c87faaf162afd9d6.bindPopup(popup_51eea31604f53c4eb3a98ea7aa1a0166)
+        ;
+
+        
+    
+    
+            var poly_line_1b5ca465ea30e27ff70c6a5e4897f3d9 = L.polyline(
+                [[38.2086175879397, 128.48878592964823], [38.20485100502513, 128.4869302512563]],
+                {"bubblingMouseEvents": true, "color": "#eab308", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#eab308", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_a2ab201280ac5ce25b2d22f5939326cc = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_6c4467c5e08155c97e8999ca76f0f42a = $(`<div id="html_6c4467c5e08155c97e8999ca76f0f42a" style="width: 100.0%; height: 100.0%;">지점 10<br>경사도: 30.8°<br>풍속: 0.5m/s</div>`)[0];
+                popup_a2ab201280ac5ce25b2d22f5939326cc.setContent(html_6c4467c5e08155c97e8999ca76f0f42a);
+            
+        
+
+        poly_line_1b5ca465ea30e27ff70c6a5e4897f3d9.bindPopup(popup_a2ab201280ac5ce25b2d22f5939326cc)
+        ;
+
+        
+    
+    
+            var poly_line_683099d8cdcf9bb2006e416b3406d577 = L.polyline(
+                [[38.20485100502513, 128.4869302512563], [38.19982889447236, 128.48600241206032]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_429304a9db5d5d7cfaeaf36a16dc2993 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_294c205607377ad59b5d4bc43706784d = $(`<div id="html_294c205607377ad59b5d4bc43706784d" style="width: 100.0%; height: 100.0%;">지점 11<br>경사도: 60.4°<br>풍속: 0.5m/s</div>`)[0];
+                popup_429304a9db5d5d7cfaeaf36a16dc2993.setContent(html_294c205607377ad59b5d4bc43706784d);
+            
+        
+
+        poly_line_683099d8cdcf9bb2006e416b3406d577.bindPopup(popup_429304a9db5d5d7cfaeaf36a16dc2993)
+        ;
+
+        
+    
+    
+            var poly_line_95e7f65d5367cf91bbf09082897a46ff = L.polyline(
+                [[38.19982889447236, 128.48600241206032], [38.194806783919596, 128.48507457286433]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_badfdbcf251fca8bc79a7fe359907ca5 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_c4bd874bd2ad134d6778781526225597 = $(`<div id="html_c4bd874bd2ad134d6778781526225597" style="width: 100.0%; height: 100.0%;">지점 12<br>경사도: 47.5°<br>풍속: 0.5m/s</div>`)[0];
+                popup_badfdbcf251fca8bc79a7fe359907ca5.setContent(html_c4bd874bd2ad134d6778781526225597);
+            
+        
+
+        poly_line_95e7f65d5367cf91bbf09082897a46ff.bindPopup(popup_badfdbcf251fca8bc79a7fe359907ca5)
+        ;
+
+        
+    
+    
+            var poly_line_c3100ffdbfb669ea645456f3a5b046b2 = L.polyline(
+                [[38.194806783919596, 128.48507457286433], [38.19104020100502, 128.48321889447237]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_98833c29bdb5072b7499cd4d415f0271 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_055d94f7ee1368ebb0264aaec6970097 = $(`<div id="html_055d94f7ee1368ebb0264aaec6970097" style="width: 100.0%; height: 100.0%;">지점 13<br>경사도: 50.3°<br>풍속: 0.5m/s</div>`)[0];
+                popup_98833c29bdb5072b7499cd4d415f0271.setContent(html_055d94f7ee1368ebb0264aaec6970097);
+            
+        
+
+        poly_line_c3100ffdbfb669ea645456f3a5b046b2.bindPopup(popup_98833c29bdb5072b7499cd4d415f0271)
+        ;
+
+        
+    
+    
+            var poly_line_ac14596ef42bbe6e66bb5b8f629d042a = L.polyline(
+                [[38.19104020100502, 128.48321889447237], [38.186018090452265, 128.4822910552764]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_10f629c5b4a526173426ffe65c312f69 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_3d1b38aa608a69af85f339f146b07961 = $(`<div id="html_3d1b38aa608a69af85f339f146b07961" style="width: 100.0%; height: 100.0%;">지점 14<br>경사도: 59.5°<br>풍속: 0.5m/s</div>`)[0];
+                popup_10f629c5b4a526173426ffe65c312f69.setContent(html_3d1b38aa608a69af85f339f146b07961);
+            
+        
+
+        poly_line_ac14596ef42bbe6e66bb5b8f629d042a.bindPopup(popup_10f629c5b4a526173426ffe65c312f69)
+        ;
+
+        
+    
+    
+            var poly_line_7e5c27cbf1ec9c7faa71206f76b31be4 = L.polyline(
+                [[38.186018090452265, 128.4822910552764], [38.18225150753769, 128.4813632160804]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_8a681022af5832a165e1fb44219a3e1a = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_551fcd03b37692018cb1d5661f8003d7 = $(`<div id="html_551fcd03b37692018cb1d5661f8003d7" style="width: 100.0%; height: 100.0%;">지점 15<br>경사도: 59.1°<br>풍속: 0.5m/s</div>`)[0];
+                popup_8a681022af5832a165e1fb44219a3e1a.setContent(html_551fcd03b37692018cb1d5661f8003d7);
+            
+        
+
+        poly_line_7e5c27cbf1ec9c7faa71206f76b31be4.bindPopup(popup_8a681022af5832a165e1fb44219a3e1a)
+        ;
+
+        
+    
+    
+            var poly_line_e09f42f3261b05097778b70c1bca8190 = L.polyline(
+                [[38.18225150753769, 128.4813632160804], [38.17722939698493, 128.48043537688443]],
+                {"bubblingMouseEvents": true, "color": "#eab308", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#eab308", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_98d80a906b204545d359e7fdb40048f7 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_5b4932361270cf2ba1474ee6359e2cd8 = $(`<div id="html_5b4932361270cf2ba1474ee6359e2cd8" style="width: 100.0%; height: 100.0%;">지점 16<br>경사도: 45.5°<br>풍속: 0.5m/s</div>`)[0];
+                popup_98d80a906b204545d359e7fdb40048f7.setContent(html_5b4932361270cf2ba1474ee6359e2cd8);
+            
+        
+
+        poly_line_e09f42f3261b05097778b70c1bca8190.bindPopup(popup_98d80a906b204545d359e7fdb40048f7)
+        ;
+
+        
+    
+    
+            var poly_line_3c70596979020f337cc84dd8e8711d4d = L.polyline(
+                [[38.17722939698493, 128.48043537688443], [38.173462814070355, 128.47857969849247]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_c9889b27ce705e13ed340000dd0e9f35 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_701344609e89833bbc150c08313ab94c = $(`<div id="html_701344609e89833bbc150c08313ab94c" style="width: 100.0%; height: 100.0%;">지점 17<br>경사도: 62.4°<br>풍속: 0.5m/s</div>`)[0];
+                popup_c9889b27ce705e13ed340000dd0e9f35.setContent(html_701344609e89833bbc150c08313ab94c);
+            
+        
+
+        poly_line_3c70596979020f337cc84dd8e8711d4d.bindPopup(popup_c9889b27ce705e13ed340000dd0e9f35)
+        ;
+
+        
+    
+    
+            var poly_line_a177f87b6ea79d376d2127a1997866b3 = L.polyline(
+                [[38.173462814070355, 128.47857969849247], [38.16844070351759, 128.4776518592965]],
+                {"bubblingMouseEvents": true, "color": "#eab308", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#eab308", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_1dd2dbce4f753ef9e72d4c36df181e2b = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_1bf8e1210909bd3efca28be6c1a5a1c1 = $(`<div id="html_1bf8e1210909bd3efca28be6c1a5a1c1" style="width: 100.0%; height: 100.0%;">지점 18<br>경사도: 46.8°<br>풍속: 0.4m/s</div>`)[0];
+                popup_1dd2dbce4f753ef9e72d4c36df181e2b.setContent(html_1bf8e1210909bd3efca28be6c1a5a1c1);
+            
+        
+
+        poly_line_a177f87b6ea79d376d2127a1997866b3.bindPopup(popup_1dd2dbce4f753ef9e72d4c36df181e2b)
+        ;
+
+        
+    
+    
+            var poly_line_d49a8cfdc78ed926c64a3e3c26834225 = L.polyline(
+                [[38.16844070351759, 128.4776518592965], [38.163418592964824, 128.4767240201005]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_82b1eb51669b21bbb546fb0bb96468cb = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_3f327bd681666bb493df506683d48e9b = $(`<div id="html_3f327bd681666bb493df506683d48e9b" style="width: 100.0%; height: 100.0%;">지점 19<br>경사도: 73.8°<br>풍속: 0.6m/s</div>`)[0];
+                popup_82b1eb51669b21bbb546fb0bb96468cb.setContent(html_3f327bd681666bb493df506683d48e9b);
+            
+        
+
+        poly_line_d49a8cfdc78ed926c64a3e3c26834225.bindPopup(popup_82b1eb51669b21bbb546fb0bb96468cb)
+        ;
+
+        
+    
+    
+            var poly_line_1b77d1191a996f6bc0ffc6c2a637e4f0 = L.polyline(
+                [[38.163418592964824, 128.4767240201005], [38.15965201005025, 128.47486834170854]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_3089f9a8fd0436e27e525e1f0c124672 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_b724416738c91a5e2df388d12d3cf479 = $(`<div id="html_b724416738c91a5e2df388d12d3cf479" style="width: 100.0%; height: 100.0%;">지점 20<br>경사도: 80.0°<br>풍속: 1.0m/s</div>`)[0];
+                popup_3089f9a8fd0436e27e525e1f0c124672.setContent(html_b724416738c91a5e2df388d12d3cf479);
+            
+        
+
+        poly_line_1b77d1191a996f6bc0ffc6c2a637e4f0.bindPopup(popup_3089f9a8fd0436e27e525e1f0c124672)
+        ;
+
+        
+    
+    
+            var poly_line_7f088543fa65b9c883d24d864732e39e = L.polyline(
+                [[38.15965201005025, 128.47486834170854], [38.154629899497486, 128.47394050251256]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_fa07d89d3e7c751c3dad656078511e8c = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_5399ca273339a844096491706235129c = $(`<div id="html_5399ca273339a844096491706235129c" style="width: 100.0%; height: 100.0%;">지점 21<br>경사도: 60.8°<br>풍속: 0.9m/s</div>`)[0];
+                popup_fa07d89d3e7c751c3dad656078511e8c.setContent(html_5399ca273339a844096491706235129c);
+            
+        
+
+        poly_line_7f088543fa65b9c883d24d864732e39e.bindPopup(popup_fa07d89d3e7c751c3dad656078511e8c)
+        ;
+
+        
+    
+    
+            var poly_line_d038350ed51923061a605ff7fd4ea511 = L.polyline(
+                [[38.154629899497486, 128.47394050251256], [38.150863316582914, 128.47301266331658]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_4127d600be0c2031a79b93160a240342 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_705cafd27119a8872f93253dfe6dd3b3 = $(`<div id="html_705cafd27119a8872f93253dfe6dd3b3" style="width: 100.0%; height: 100.0%;">지점 22<br>경사도: 77.4°<br>풍속: 0.9m/s</div>`)[0];
+                popup_4127d600be0c2031a79b93160a240342.setContent(html_705cafd27119a8872f93253dfe6dd3b3);
+            
+        
+
+        poly_line_d038350ed51923061a605ff7fd4ea511.bindPopup(popup_4127d600be0c2031a79b93160a240342)
+        ;
+
+        
+    
+    
+            var poly_line_ce063b229f3246e17da45ca9df543b7c = L.polyline(
+                [[38.150863316582914, 128.47301266331658], [38.14584120603015, 128.47115698492462]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_8ea1e6f9d88c460e511a17e1a30337c2 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_baeddbc7d97a702b78006601cbab8959 = $(`<div id="html_baeddbc7d97a702b78006601cbab8959" style="width: 100.0%; height: 100.0%;">지점 23<br>경사도: 79.4°<br>풍속: 1.0m/s</div>`)[0];
+                popup_8ea1e6f9d88c460e511a17e1a30337c2.setContent(html_baeddbc7d97a702b78006601cbab8959);
+            
+        
+
+        poly_line_ce063b229f3246e17da45ca9df543b7c.bindPopup(popup_8ea1e6f9d88c460e511a17e1a30337c2)
+        ;
+
+        
+    
+    
+            var poly_line_3a0915f7168416f5222e6b73fa8b8626 = L.polyline(
+                [[38.14584120603015, 128.47115698492462], [38.14081909547739, 128.47022914572864]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_1bfea068766aae99baf02d4fbeaf32c8 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_4af6b1dc230cedb86067b73e5b680fa8 = $(`<div id="html_4af6b1dc230cedb86067b73e5b680fa8" style="width: 100.0%; height: 100.0%;">지점 24<br>경사도: 77.2°<br>풍속: 1.4m/s</div>`)[0];
+                popup_1bfea068766aae99baf02d4fbeaf32c8.setContent(html_4af6b1dc230cedb86067b73e5b680fa8);
+            
+        
+
+        poly_line_3a0915f7168416f5222e6b73fa8b8626.bindPopup(popup_1bfea068766aae99baf02d4fbeaf32c8)
+        ;
+
+        
+    
+    
+            var poly_line_d69d5d04dce95377aa3cafd8b0f3d0bc = L.polyline(
+                [[38.14081909547739, 128.47022914572864], [38.13705251256282, 128.46930130653266]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_a11216f12faf29e1e9e08f4760b65dfb = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_5fc1f779d2e408dce52f5b58b8aaea72 = $(`<div id="html_5fc1f779d2e408dce52f5b58b8aaea72" style="width: 100.0%; height: 100.0%;">지점 25<br>경사도: 68.4°<br>풍속: 1.6m/s</div>`)[0];
+                popup_a11216f12faf29e1e9e08f4760b65dfb.setContent(html_5fc1f779d2e408dce52f5b58b8aaea72);
+            
+        
+
+        poly_line_d69d5d04dce95377aa3cafd8b0f3d0bc.bindPopup(popup_a11216f12faf29e1e9e08f4760b65dfb)
+        ;
+
+        
+    
+    
+            var poly_line_4bab2ca2b2a6c2f13b3c5c1e7f42f67d = L.polyline(
+                [[38.13705251256282, 128.46930130653266], [38.13203040201005, 128.4674456281407]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_0073cf41069f328119944fac1fb56014 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_80effa404e70649fb3fa7c323b6c76f7 = $(`<div id="html_80effa404e70649fb3fa7c323b6c76f7" style="width: 100.0%; height: 100.0%;">지점 26<br>경사도: 69.7°<br>풍속: 1.7m/s</div>`)[0];
+                popup_0073cf41069f328119944fac1fb56014.setContent(html_80effa404e70649fb3fa7c323b6c76f7);
+            
+        
+
+        poly_line_4bab2ca2b2a6c2f13b3c5c1e7f42f67d.bindPopup(popup_0073cf41069f328119944fac1fb56014)
+        ;
+
+        
+    
+    
+            var poly_line_c54ba7f3cb7ae3352f8979ff98d4de40 = L.polyline(
+                [[38.13203040201005, 128.4674456281407], [38.12826381909548, 128.4665177889447]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_86a80cde5c1fcf8ec20a60be0c21359c = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_b0bd0a25b888e644c484def3516e3e72 = $(`<div id="html_b0bd0a25b888e644c484def3516e3e72" style="width: 100.0%; height: 100.0%;">지점 27<br>경사도: 73.8°<br>풍속: 1.7m/s</div>`)[0];
+                popup_86a80cde5c1fcf8ec20a60be0c21359c.setContent(html_b0bd0a25b888e644c484def3516e3e72);
+            
+        
+
+        poly_line_c54ba7f3cb7ae3352f8979ff98d4de40.bindPopup(popup_86a80cde5c1fcf8ec20a60be0c21359c)
+        ;
+
+        
+    
+    
+            var poly_line_bffef231903f0a33b0b9c7ec4c02fdfa = L.polyline(
+                [[38.12826381909548, 128.4665177889447], [38.123241708542714, 128.46558994974873]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_1c49603ef118d3478c35fb1a7945b0f6 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_666de2eafbd9808e230ac3f4eea3b1d1 = $(`<div id="html_666de2eafbd9808e230ac3f4eea3b1d1" style="width: 100.0%; height: 100.0%;">지점 28<br>경사도: 79.6°<br>풍속: 1.7m/s</div>`)[0];
+                popup_1c49603ef118d3478c35fb1a7945b0f6.setContent(html_666de2eafbd9808e230ac3f4eea3b1d1);
+            
+        
+
+        poly_line_bffef231903f0a33b0b9c7ec4c02fdfa.bindPopup(popup_1c49603ef118d3478c35fb1a7945b0f6)
+        ;
+
+        
+    
+    
+            var poly_line_9323f877a2661b6810116e29ba2fb0fe = L.polyline(
+                [[38.123241708542714, 128.46558994974873], [38.11947512562814, 128.46466211055278]],
+                {"bubblingMouseEvents": true, "color": "#ef4444", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#ef4444", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 4}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_0d28bd406a852126b3d4fc3d38afd984 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_76c2f3f4739eba2e7c0c551803b761dd = $(`<div id="html_76c2f3f4739eba2e7c0c551803b761dd" style="width: 100.0%; height: 100.0%;">지점 29<br>경사도: 75.5°<br>풍속: 1.6m/s</div>`)[0];
+                popup_0d28bd406a852126b3d4fc3d38afd984.setContent(html_76c2f3f4739eba2e7c0c551803b761dd);
+            
+        
+
+        poly_line_9323f877a2661b6810116e29ba2fb0fe.bindPopup(popup_0d28bd406a852126b3d4fc3d38afd984)
+        ;
+
+        
+    
+    
+            var poly_line_bde6628568d3db0bca4c7a215aa34d43 = L.polyline(
+                [[38.11947512562814, 128.46466211055278], [38.11947512562814, 128.46558994974873]],
+                {"bubblingMouseEvents": true, "color": "#eab308", "dashArray": null, "dashOffset": null, "fill": false, "fillColor": "#eab308", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "noClip": false, "opacity": 0.8, "smoothFactor": 1.0, "stroke": true, "weight": 3}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_df85351696f53fecf1c429214a5457ec = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_b233cbd8febceb729dd68acc69f0e75b = $(`<div id="html_b233cbd8febceb729dd68acc69f0e75b" style="width: 100.0%; height: 100.0%;">지점 30<br>경사도: 51.9°<br>풍속: 1.6m/s</div>`)[0];
+                popup_df85351696f53fecf1c429214a5457ec.setContent(html_b233cbd8febceb729dd68acc69f0e75b);
+            
+        
+
+        poly_line_bde6628568d3db0bca4c7a215aa34d43.bindPopup(popup_df85351696f53fecf1c429214a5457ec)
+        ;
+
+        
+    
+    
+            var marker_8bb56f596e4cb8fa27956d39921709ec = L.marker(
+                [38.25, 128.5],
+                {
+}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+            var icon_3cc8cb1f3dc01031d064e88052a4f123 = L.AwesomeMarkers.icon(
+                {
+  "markerColor": "green",
+  "iconColor": "white",
+  "icon": "info-sign",
+  "prefix": "glyphicon",
+  "extraClasses": "fa-rotate-0",
+}
+            );
+        
+    
+        var popup_badf4129b5a82a6d0a50a9aef72f4015 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_6bafdfb9c417df1f38f9c2d67d197832 = $(`<div id="html_6bafdfb9c417df1f38f9c2d67d197832" style="width: 100.0%; height: 100.0%;">         <b>🚒 119 센터 (출발점)</b><br>         위도: 38.2500°<br>         경도: 128.5000°<br>         <hr>         <b>거리</b> (착륙지점까지): 14.84km         </div>`)[0];
+                popup_badf4129b5a82a6d0a50a9aef72f4015.setContent(html_6bafdfb9c417df1f38f9c2d67d197832);
+            
+        
+
+        marker_8bb56f596e4cb8fa27956d39921709ec.bindPopup(popup_badf4129b5a82a6d0a50a9aef72f4015)
+        ;
+
+        
+    
+    
+            marker_8bb56f596e4cb8fa27956d39921709ec.bindTooltip(
+                `<div>
+                     119 센터
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+                marker_8bb56f596e4cb8fa27956d39921709ec.setIcon(icon_3cc8cb1f3dc01031d064e88052a4f123);
+            
+    
+            var marker_49091854aaf4f2c7480fe686e58ca0e8 = L.marker(
+                [38.11947512562814, 128.46466211055278],
+                {
+}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+            var icon_db9e734c8a3e9c7daae7821c72a14b2c = L.AwesomeMarkers.icon(
+                {
+  "markerColor": "blue",
+  "iconColor": "white",
+  "icon": "arrow-up",
+  "prefix": "glyphicon",
+  "extraClasses": "fa-rotate-0",
+}
+            );
+        
+    
+        var popup_6edfb27cdf99828ecd2ca1c22b588282 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_53cb9c4a78e1271eed8e5711d79ba4ec = $(`<div id="html_53cb9c4a78e1271eed8e5711d79ba4ec" style="width: 100.0%; height: 100.0%;">         <b>🚁 호이스트 착륙지점</b><br>         위도: 38.1195°<br>         경도: 128.4647°<br>         고도: 1635m<br>         <hr>         <b>조난자까지 거리</b>: 56m<br>         <b>지형 조건</b>: 개활지, 경사도 51.9°         </div>`)[0];
+                popup_6edfb27cdf99828ecd2ca1c22b588282.setContent(html_53cb9c4a78e1271eed8e5711d79ba4ec);
+            
+        
+
+        marker_49091854aaf4f2c7480fe686e58ca0e8.bindPopup(popup_6edfb27cdf99828ecd2ca1c22b588282)
+        ;
+
+        
+    
+    
+            marker_49091854aaf4f2c7480fe686e58ca0e8.bindTooltip(
+                `<div>
+                     착륙지점
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+                marker_49091854aaf4f2c7480fe686e58ca0e8.setIcon(icon_db9e734c8a3e9c7daae7821c72a14b2c);
+            
+    
+            var marker_df882e07b0d043762e1a1d1ff0aed133 = L.marker(
+                [38.1192, 128.4652],
+                {
+}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+            var icon_2d283f4d0b58898f896be08f819dd72f = L.AwesomeMarkers.icon(
+                {
+  "markerColor": "red",
+  "iconColor": "white",
+  "icon": "exclamation-sign",
+  "prefix": "glyphicon",
+  "extraClasses": "fa-rotate-0",
+}
+            );
+        
+    
+        var popup_8794942e69ac1707376cf2a5514ed929 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_17a3b31433110d18c38707e31f2f9867 = $(`<div id="html_17a3b31433110d18c38707e31f2f9867" style="width: 100.0%; height: 100.0%;">         <b>🆘 조난자 위치</b><br>         위도: 38.1192°<br>         경도: 128.4652°<br>         고도: 678m<br>         <hr>         <b>지형 상황</b><br>         • 경사도: 68.8° ⚠️ 매우 가파름<br>         • 능선상: 아니오<br>         • 임목: 밀생 (호이스트 어려움)<br>         </div>`)[0];
+                popup_8794942e69ac1707376cf2a5514ed929.setContent(html_17a3b31433110d18c38707e31f2f9867);
+            
+        
+
+        marker_df882e07b0d043762e1a1d1ff0aed133.bindPopup(popup_8794942e69ac1707376cf2a5514ed929)
+        ;
+
+        
+    
+    
+            marker_df882e07b0d043762e1a1d1ff0aed133.bindTooltip(
+                `<div>
+                     조난자
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+                marker_df882e07b0d043762e1a1d1ff0aed133.setIcon(icon_2d283f4d0b58898f896be08f819dd72f);
+            
+    
+            var circle_c72f7f4f07e600c13015ade4f74e8768 = L.circle(
+                [38.25, 128.5],
+                {"bubblingMouseEvents": true, "color": "green", "dashArray": "5, 5", "dashOffset": null, "fill": false, "fillColor": "green", "fillOpacity": 0.2, "fillRule": "evenodd", "lineCap": "round", "lineJoin": "round", "opacity": 0.3, "radius": 30000, "stroke": true, "weight": 1}
+            ).addTo(map_5aad32f0127619c3538607422dd83037);
+        
+    
+        var popup_6a08d0d7f3bff7b9954f6de3f8141dd6 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_d23ff58fb1265f631a807368216146a8 = $(`<div id="html_d23ff58fb1265f631a807368216146a8" style="width: 100.0%; height: 100.0%;">30km 반경</div>`)[0];
+                popup_6a08d0d7f3bff7b9954f6de3f8141dd6.setContent(html_d23ff58fb1265f631a807368216146a8);
+            
+        
+
+        circle_c72f7f4f07e600c13015ade4f74e8768.bindPopup(popup_6a08d0d7f3bff7b9954f6de3f8141dd6)
+        ;
+
+        
+    
+</script>
+</html>

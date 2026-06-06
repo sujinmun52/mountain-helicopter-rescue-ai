@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>V-World 3D 산악 구조 미션 플래너</title>
+
+    <script type="text/javascript"
+        src="https://map.vworld.kr/js/webglMapInit.js.do?version=3.0&apiKey=82817985-C786-32C2-9107-C4205F5A3CA7&domain=localhost">
+    </script>
+
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0d0d0d;
+            color: #fff;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+            gap: 10px;
+            padding: 10px;
+        }
+
+        #vmap {
+            flex: 3;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        .info-panel {
+            flex: 1;
+            background: #1e1e1e;
+            border-radius: 8px;
+            padding: 15px;
+            overflow-y: auto;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            border: 2px solid #00DDFF;
+        }
+
+        .mission-header {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #00DDFF;
+            color: #00DDFF;
+            text-align: center;
+        }
+
+        .section-title {
+            background: linear-gradient(90deg, #00DDFF, #00AA88);
+            padding: 8px;
+            border-radius: 4px;
+            margin-top: 12px;
+            margin-bottom: 8px;
+            font-weight: bold;
+            font-size: 12px;
+        }
+
+        .location-card {
+            background: rgba(30, 30, 40, 0.8);
+            border-left: 3px solid #FF6B6B;
+            padding: 10px;
+            margin: 8px 0;
+            border-radius: 4px;
+            font-size: 11px;
+        }
+
+        .location-label {
+            font-weight: bold;
+            color: #FFD700;
+            font-size: 11px;
+            text-transform: uppercase;
+        }
+
+        .location-data {
+            margin: 4px 0;
+            font-size: 11px;
+            line-height: 1.4;
+            color: #CCC;
+        }
+
+        .status-good  { color: #4ade80; }
+        .status-warning { color: #facc15; }
+        .status-critical { color: #ff6b6b; }
+
+        .warning-box {
+            background: rgba(255, 100, 100, 0.15);
+            border-left: 3px solid #FF6B6B;
+            padding: 8px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-size: 11px;
+            color: #FFB3B3;
+        }
+
+        .legend {
+            background: rgba(100, 100, 120, 0.3);
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-size: 10px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            padding: 3px 0;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 3px;
+            margin-right: 6px;
+            border-radius: 2px;
+        }
+
+        .api-info {
+            background: rgba(0, 200, 200, 0.1);
+            border: 1px solid #00DDFF;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-size: 10px;
+            color: #88FFFF;
+        }
+
+        #map-status {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.7);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 100;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div style="flex:3; position:relative;">
+            <div id="vmap" style="width:100%; height:100%; border-radius:8px;"></div>
+            <div id="map-status">지도 로딩 중...</div>
+        </div>
+
+        <div class="info-panel">
+            <div class="mission-header">🚁 미션 브리핑</div>
+
+            <div class="section-title">위치 정보</div>
+
+            <div class="location-card">
+                <div class="location-label">🚒 119센터</div>
+                <div class="location-data">
+                    위도: 38.2500°<br>
+                    경도: 128.5000°<br>
+                    <span class="status-good">✓ 출발지점</span>
+                </div>
+            </div>
+
+            <div class="location-card">
+                <div class="location-label">🪂 착륙지점</div>
+                <div class="location-data">
+                    위도: 38.1207°<br>
+                    경도: 128.4610°<br>
+                    고도: 1571m<br>
+                    경사도: 28.3°
+                </div>
+            </div>
+
+            <div class="location-card">
+                <div class="location-label">🆘 조난자</div>
+                <div class="location-data">
+                    위도: 38.1192°<br>
+                    경도: 128.4652°<br>
+                    고도: 704m<br>
+                    경사도: <span class="status-critical">72.7° (매우가파름)</span>
+                </div>
+            </div>
+
+            <div class="section-title">경로 통계</div>
+            <div class="location-data">
+                • 총 거리: 15.53km<br>
+                • 포인트 수: 49<br>
+                • 평균 경사도: 40.9°<br>
+                • 최대 풍속: 8.0m/s
+            </div>
+
+            <div class="warning-box">
+                <strong>⚠️ 주의사항</strong><br>
+                • 조난자 위치 극도로 가파름<br>
+                • 능선상 위치 (강풍)<br>
+                • 호이스트 시간: ~15분
+            </div>
+
+            <div class="section-title">색상 범례</div>
+            <div class="legend">
+                <div class="legend-item">
+                    <div class="legend-color" style="background:#00AA00;"></div>
+                    <span>안전 (패널티 &lt;0.3)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background:#FFAA00;"></div>
+                    <span>주의 (패널티 0.3~0.6)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background:#FF0000;"></div>
+                    <span>위험 (패널티 &gt;0.6)</span>
+                </div>
+            </div>
+
+            <div class="api-info">
+                🔧 V-World 3D WebGL API v3.0<br>
+                API 키: 82817985-C786-...<br>
+                서버: map.vworld.kr
+            </div>
+        </div>
+    </div>
+
+    <script>
+        var vMap;
+
+        // ── VWorld 3D SDK 초기화 (vw 엔진이 준비된 뒤에만 실행) ──────────────
+        function initVworld() {
+            var mapOptions = {
+                mapId: "vmap",
+                initPosition: vw.ol3.camera.getPosition(128.4826, 38.1846, 20000),
+                initCamera: vw.ol3.camera.getCamera(-55, 0, 1000)
+            };
+            vw.ol3.init(mapOptions, function (vM) {
+                vMap = vM;
+                console.log("VWorld 3D 지도 초기화 완료");
+                addMissionObjects();
+            });
+        }
+
+        // SDK 로딩을 폴링으로 대기 (최대 ~60초). 3D 엔진(vw.ol3)은 비동기로 늦게 로드됨.
+        function waitForVworld(triesLeft) {
+            if (typeof vw !== "undefined" && vw.ol3 && vw.ol3.camera) {
+                console.log("VWorld 3D 엔진 준비 완료 — 초기화 시작");
+                initVworld();
+                return;
+            }
+            if (triesLeft <= 0) {
+                document.getElementById("vmap").innerHTML =
+                    '<div style="padding:40px;color:#fff;font-size:15px;line-height:1.8">' +
+                    '⚠️ <b>VWorld 3D 엔진을 불러오지 못했습니다.</b><br><br>' +
+                    '원인은 거의 항상 <b>접속 방식</b>입니다. 아래를 확인하세요:<br>' +
+                    '① <b>file:// 로 직접 열지 마세요.</b> 로컬 서버로 서빙해야 합니다.<br>' +
+                    '② 주소창이 반드시 <b>http://localhost:5500</b> 여야 합니다 ' +
+                    '(127.0.0.1 ❌ — API 키가 domain=localhost 로 발급됨).<br>' +
+                    '③ VWorld 포털에서 이 키의 등록 도메인에 <b>localhost</b> 가 있어야 합니다.' +
+                    '</div>';
+                console.error("VWorld SDK(vw) 로드 실패");
+                return;
+            }
+            setTimeout(function () { waitForVworld(triesLeft - 1); }, 300);
+        }
+        window.addEventListener("load", function () { waitForVworld(200); });
+
+        // ── 미션 좌표/오브젝트 (vw 준비 후 호출되므로 함수 내부에서 생성) ──────
+        function addMissionObjects() {
+            var PATH_COORDS = [
+                new vw.ol3.Coordinate(128.5000, 38.2500, 500),
+                new vw.ol3.Coordinate(128.4900, 38.2200, 800),
+                new vw.ol3.Coordinate(128.4800, 38.1900, 1100),
+                new vw.ol3.Coordinate(128.4750, 38.1600, 1300),
+                new vw.ol3.Coordinate(128.4700, 38.1400, 1400),
+                new vw.ol3.Coordinate(128.4650, 38.1300, 1500),
+                new vw.ol3.Coordinate(128.4610, 38.1207, 1571),
+                new vw.ol3.Coordinate(128.4652, 38.1192, 704)
+            ];
+
+            var om = vMap.getObjectManager();
+
+            // 비행 경로
+            var polyLine = new vw.ol3.Object.PolyLine();
+            polyLine.id = "flight_path";
+            polyLine.coordinate = PATH_COORDS;
+            polyLine.lineWidth = 4;
+            polyLine.color = new vw.ol3.Color(0, 255, 80, 200);
+            om.add(polyLine, true);
+
+            // 119센터 라벨
+            var lblFire = new vw.ol3.Object.Label();
+            lblFire.id = "lbl_fire";
+            lblFire.position = new vw.ol3.Coordinate(128.5000, 38.2500, 300);
+            lblFire.text = "119센터";
+            lblFire.fontColor = new vw.ol3.Color(0, 255, 80, 255);
+            lblFire.fontSize = 16;
+            lblFire.fontBold = true;
+            om.add(lblFire, true);
+
+            // 착륙지점 라벨
+            var lblLanding = new vw.ol3.Object.Label();
+            lblLanding.id = "lbl_landing";
+            lblLanding.position = new vw.ol3.Coordinate(128.4610, 38.1207, 1700);
+            lblLanding.text = "착륙지점 (1571m)";
+            lblLanding.fontColor = new vw.ol3.Color(0, 136, 255, 255);
+            lblLanding.fontSize = 16;
+            lblLanding.fontBold = true;
+            om.add(lblLanding, true);
+
+            // 조난자 라벨
+            var lblVictim = new vw.ol3.Object.Label();
+            lblVictim.id = "lbl_victim";
+            lblVictim.position = new vw.ol3.Coordinate(128.4652, 38.1192, 900);
+            lblVictim.text = "조난자 (704m)";
+            lblVictim.fontColor = new vw.ol3.Color(255, 80, 80, 255);
+            lblVictim.fontSize = 16;
+            lblVictim.fontBold = true;
+            om.add(lblVictim, true);
+
+            console.log("미션 오브젝트 추가 완료");
+        }
+    </script>
+</body>
+</html>
