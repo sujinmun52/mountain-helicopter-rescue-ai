@@ -58,7 +58,7 @@ def load_xgb_model(model_key: str, tactic: str) -> xgb.Booster:
     path = os.path.join(_DIR, 'models', f'xgb_{model_key}_{tactic}_model.ubj')
     booster = xgb.Booster()
     booster.load_model(path)
-    booster.set_param({"device": "cuda"})  # GPU 실시간 추론 바인딩
+    booster.set_param({"device": "cuda"})  # GPU 실시간 추론 가동
     return booster
 
 models = {
@@ -68,10 +68,10 @@ models = {
 
 FIRE_STATION = {"latitude": 38.25, "longitude": 128.50}
 
-# 새 항공 역학 레이어 가중치 학습에 쓰인 12대 추론 변수 리스트
+# 모델에 입력할 순수 날것의 10대 피처 컬럼 (치팅 스코어 전면 배제)
 feature_columns = [
     'elevation', 'slope_deg', 'tree_density', 'tree_height',
-    'wind_speed', 'wind_dir_sin', 'wind_dir_cos', 'wind_dir_score', 'altitude_score',
+    'wind_speed', 'wind_dir_sin', 'wind_dir_cos',
     'land_0', 'land_1', 'land_2'
 ]
 
@@ -94,7 +94,7 @@ def find_best_rescue_tactics(rescue_lat: float, rescue_lon: float,
         print("반경 내 유효 지형 데이터가 없거나 기상 피처가 유실되었습니다.")
         return None
 
-    # 풍향 공간 인코딩 및 실시간 진입 정풍 평점, 밀도고도 확장 연산
+    # 풍향 공간 인코딩 및 전처리 레이어
     candidates['wind_direction']  = candidates['wind_direction'].fillna(0.0)
     candidates['wind_dir_rad']    = np.radians(candidates['wind_direction'])
     candidates['wind_dir_sin']    = np.sin(candidates['wind_dir_rad'])
@@ -103,11 +103,10 @@ def find_best_rescue_tactics(rescue_lat: float, rescue_lon: float,
     candidates['dist_to_rescue']    = np.sqrt((candidates['latitude'] - rescue_lat) ** 2 + (candidates['longitude'] - rescue_lon) ** 2)
     candidates['dist_from_base_km'] = np.sqrt((candidates['latitude'] - FIRE_STATION["latitude"]) ** 2 + (candidates['longitude'] - FIRE_STATION["longitude"]) ** 2) * 110.0
 
-    # 1차 반경 필터링: 설정한 search_radius_meters 범위 내 격자만 슬라이싱
+    # 1차 반경 필터링
     candidates = candidates[candidates['dist_to_rescue'] * 110000 <= search_radius_meters].copy()
 
-    # 🎯 [하천 구역 안전 차단 패치] 안착(Landing) 및 호이스트(Hoist) 공통 적용
-    # land_type이 2(land_2 == 1)인 모든 격자를 후보군에서 원천 배제합니다.
+    # 하천 구역 안전 차단 패치
     candidates = candidates[candidates['land_2'] != 1].copy()
 
     if candidates.empty:
@@ -124,8 +123,14 @@ def find_best_rescue_tactics(rescue_lat: float, rescue_lon: float,
         [1.0, 0.0], default=0.5
     )
 
-    # 실시간 밀도고도 평점 계산 (설악산 최고봉 1708m 기준)
-    candidates['altitude_score'] = 1.0 - (candidates['elevation'] / 1708.0) * 0.4
+    # 고도 구간별 3단계 격리 인코딩 적용 및 스코어 매핑
+    ELEVATION_MAP = {0: 1.0, 1: 0.70, 2: 0.35}
+    elevation_grade = np.select(
+        [candidates['elevation'] < 500,
+         (candidates['elevation'] >= 500) & (candidates['elevation'] < 1200)],
+        [0, 1], default=2
+    )
+    candidates['elevation_score'] = np.vectorize(ELEVATION_MAP.get)(elevation_grade).astype('float32')
 
     # 기본 리스크 맵 인프라 연산
     candidates['wind_score'] = np.select(
@@ -137,38 +142,38 @@ def find_best_rescue_tactics(rescue_lat: float, rescue_lon: float,
     candidates['tree_density_score'] = candidates['tree_density'].map(density_map)
     candidates['tree_height_score']  = candidates['tree_height'].map(height_map)
 
-    # 지형/기상 가중치 테이블 세부 연산
+    # 전술 적합도 합산 연산
     if heli_type == "small":
         candidates['score_landing'] = (
             candidates['slope_score']        * 0.42 + candidates['tree_density_score'] * 0.10 +
             candidates['tree_height_score']  * 0.08 + candidates['wind_score']         * 0.20 +
-            candidates['wind_dir_score']     * 0.12 + candidates['altitude_score']     * 0.08
+            candidates['wind_dir_score']     * 0.12 + candidates['elevation_score']    * 0.08
         )
         candidates['score_hoist'] = (
             candidates['slope_score']        * 0.12 + candidates['tree_density_score'] * 0.15 +
             candidates['tree_height_score']  * 0.20 + candidates['wind_score']         * 0.30 +
-            candidates['wind_dir_score']     * 0.15 + candidates['altitude_score']     * 0.08
+            candidates['wind_dir_score']     * 0.15 + candidates['elevation_score']    * 0.08
         )
     else:  # large
         candidates['score_landing'] = (
             candidates['slope_score']        * 0.46 + candidates['tree_density_score'] * 0.14 +
             candidates['tree_height_score']  * 0.08 + candidates['wind_score']         * 0.12 +
-            candidates['wind_dir_score']     * 0.08 + candidates['altitude_score']     * 0.12
+            candidates['wind_dir_score']     * 0.08 + candidates['elevation_score']    * 0.12
         )
         candidates['score_hoist'] = (
             candidates['slope_score']        * 0.10 + candidates['tree_density_score'] * 0.24 +
             candidates['tree_height_score']  * 0.18 + candidates['wind_score']         * 0.18 +
-            candidates['wind_dir_score']     * 0.12 + candidates['altitude_score']     * 0.18
+            candidates['wind_dir_score']     * 0.12 + candidates['elevation_score']    * 0.18
         )
 
-    # XGBoost GPU 매트릭스 추론 가동 (12대 입력 변수)
+    # XGBoost GPU 매트릭스 추론 가동 (순수 10대 변수 사용으로 데이터 누수 원천 차단)
     X_candidates = candidates[feature_columns].astype(np.float32)
     d_candidates = xgb.DMatrix(X_candidates)
 
     candidates['pred_landing'] = models["landing"].predict(d_candidates).astype(np.int32)
     candidates['pred_hoist']   = models["hoist"].predict(d_candidates).astype(np.int32)
 
-    # 반경 50m 이격 안전 보장 필터 (물리적 거리 기준 정밀 차단)
+    # 공간적 다각화 필터 (50m 이격 보장)
     def filter_spatial_diversity(sorted_df: pd.DataFrame, min_sep_deg: float = 0.000455) -> pd.DataFrame:
         selected = []
         for _, row in sorted_df.iterrows():
@@ -177,7 +182,7 @@ def find_best_rescue_tactics(rescue_lat: float, rescue_lon: float,
             else:
                 if all(np.sqrt((row['latitude'] - s['latitude'])**2 + (row['longitude'] - s['longitude'])**2) >= min_sep_deg for s in selected):
                     selected.append(row)
-            if len(selected) == 3:  # 최대 3순위까지만 수집 후 조기 중단
+            if len(selected) == 3:
                 break
         return pd.DataFrame(selected) if selected else pd.DataFrame()
 
@@ -191,7 +196,7 @@ def find_best_rescue_tactics(rescue_lat: float, rescue_lon: float,
     print(f"[산악 구조 헬기 전술 통제 시스템] 실시간 관제 리포트 - 기종: {heli_kor_name}")
     print("="*115)
 
-    # A안 출력: 3순위 안착 착륙 후보지 리포트 통합 루프
+    # A안 출력
     print(f"\n[A안: 기체 직접 안착(Landing) 추천 좌표 목록 (최대 3순위)]")
     print("-" * 115)
     if not best_landing.empty:
@@ -200,22 +205,23 @@ def find_best_rescue_tactics(rescue_lat: float, rescue_lon: float,
             print(f" {rank}순위 추천지 -> 좌표: ({r['latitude']:.5f}, {r['longitude']:.5f})")
             print(f"    [전술 거리] 조난자까지: 약 {r['dist_to_rescue'] * 110000:.1f}m | 소방기지로부터: 약 {r['dist_from_base_km']:.2f}km")
             print(f"    [AI 안전성] 등급: {target_labels[int(r['pred_landing'])]} | 전술 적합도 점수: {r['score_landing']:.4f}점")
-            print(f"    [현장 실황] 풍속: {r['wind_speed']:.1f}m/s ({w_rel}) | 실효고도: {r['elevation']:.1f}m (밀도리스크점수: {r['altitude_score']:.2f}점)")
+            # 🎯 [수정]: 지형고도점수 출력을 지우고 순수 계측고도 수치만 출력하도록 정돈
+            print(f"    [현장 실황] 풍속: {r['wind_speed']:.1f}m/s ({w_rel}) | 계측고도: {r['elevation']:.1f}m")
             print("-" * 80)
     else:
         print(" 현재 조건 및 지형 제약 하에 안전한 기체 안착 격자가 없습니다.")
 
-    # B안 출력: 3순위 호이스트 강하 후보지 리포트 통합 루프
+    # B안 출력
     print(f"\n[B안: 제자리 비행 호이스트(Hoist) 강하 추천 좌표 목록 (최대 3순위)]")
     print("-" * 115)
     if not best_hoist.empty:
         for rank, (_, r) in enumerate(best_hoist.iterrows(), 1):
-            w_rel = w_map.get(r['wind_dir_score'], '측풍')
             orig_land = 0 if r.get('land_0', 0) == 1 else (1 if r.get('land_1', 0) == 1 else 2)
             print(f" {rank}순위 구조지 -> 좌표: ({r['latitude']:.5f}, {r['longitude']:.5f})")
             print(f"    [전술 거리] 조난자까지: 약 {r['dist_to_rescue'] * 110000:.1f}m | 소방기지로부터: 약 {r['dist_from_base_km']:.2f}km")
             print(f"    [AI 안전성] 등급: {target_labels[int(r['pred_hoist'])]} | 전술 적합도 점수: {r['score_hoist']:.4f}점")
-            print(f"    [현장 실황] 풍속: {r['wind_speed']:.1f}m/s | 수목 높이등급: {int(r['tree_height'])} | 수목밀도: {int(r['tree_density'])} | 지형형태: {orig_land}")
+            # 🎯 [수정]: 끝부분의 지형고도점수 매핑 텍스트를 지우고 깔끔하게 마무리
+            print(f"    [현장 실황] 풍속: {r['wind_speed']:.1f}m/s | 수목 높이등급: {int(r['tree_height'])} | 수목밀도: {int(r['tree_density'])} | 지형형태: {orig_land} | 계측고도: {r['elevation']:.1f}m")
             print("-" * 80)
     else:
         print(" 현재 조건 및 지형 제약 하에 안전한 호이스트 작전 공간이 없습니다.")
