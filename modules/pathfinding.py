@@ -110,6 +110,99 @@ def is_within_bounds(pos, bounds):
 
 
 # ============================================================
+# [공통] A* 탐색 엔진 (Strategy 패턴)
+# ============================================================
+
+class AStarPlanner:
+    """
+    객체 비종속 A* 엔진. 비용함수·휴리스틱·차단처리를 '주입'받아
+    헬기/구조대원 등의 탐색을 단일 루프로 처리한다 (DRY).
+
+    주입 인자:
+        cost_fn(current, neighbor) -> float
+            이동 비용. 통행 불가 시 float('inf').
+        heuristic_fn(node, goal) -> float
+            휴리스틱(스케일 포함, admissible). stale-skip·f값 모두 이 함수를 사용.
+        bounds: (min_r, max_r, min_c, max_c)
+            탐색 바운딩 박스.
+        on_blocked(current, neighbor, goal) -> float | None  (기본 None)
+            cost==inf 일 때 호출. 숫자를 반환하면 그 비용으로 통과 허용,
+            None이면 차단(blocked 카운트 후 스킵).
+            └ 헬기 비상회랑·구조대원 'goal=절벽 진입 허용'을 이 콜백으로 표현.
+
+    search()는 (path, explored_cells, blocked_cells)를 반환하고,
+    스무딩·결과 포장은 호출부(객체별 wrapper)가 담당한다.
+    """
+    DIRECTIONS = [(-1, 0), (1, 0), (0, -1), (0, 1),
+                  (-1, -1), (-1, 1), (1, -1), (1, 1)]
+
+    def __init__(self, cost_fn, heuristic_fn, bounds, on_blocked=None):
+        self.cost_fn = cost_fn
+        self.heuristic_fn = heuristic_fn
+        self.bounds = bounds
+        self.on_blocked = on_blocked
+
+    def search(self, start, goal):
+        """
+        Returns:
+            (path, explored_cells, blocked_cells)
+            - path: list of (row, col). 빈 리스트면 경로 없음.
+            - explored_cells: 방문(g_score 등록) 셀 수.
+            - blocked_cells: cost==inf 로 차단된 셀 수.
+        """
+        bounds = self.bounds
+        cost_fn = self.cost_fn
+        heuristic_fn = self.heuristic_fn
+        on_blocked = self.on_blocked
+
+        open_set = []
+        heapq.heappush(open_set, (0.0, start))
+        came_from = {}
+        g_score = {start: 0.0}
+        blocked = 0
+
+        while open_set:
+            f_popped, current = heapq.heappop(open_set)
+
+            # stale 엔트리 스킵 (decrease-key 미사용 → 더 나은 g가 이미 갱신됨)
+            if f_popped > g_score[current] + heuristic_fn(current, goal):
+                continue
+
+            if current == goal:
+                path = []
+                node = current
+                while node in came_from:
+                    path.append(node)
+                    node = came_from[node]
+                path.append(start)
+                path.reverse()
+                return path, len(g_score), blocked
+
+            for dr, dc in self.DIRECTIONS:
+                neighbor = (current[0] + dr, current[1] + dc)
+
+                if not is_within_bounds(neighbor, bounds):
+                    continue
+
+                cost = cost_fn(current, neighbor)
+                if cost == float('inf'):
+                    alt = on_blocked(current, neighbor, goal) if on_blocked else None
+                    if alt is None:
+                        blocked += 1
+                        continue
+                    cost = alt
+
+                tentative_g = g_score[current] + cost
+                if neighbor not in g_score or tentative_g < g_score[neighbor]:
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g
+                    f_score = tentative_g + heuristic_fn(neighbor, goal)
+                    heapq.heappush(open_set, (f_score, neighbor))
+
+        return [], len(g_score), blocked
+
+
+# ============================================================
 # [헬기] 비행 경로 탐색 모듈
 # ============================================================
 
@@ -248,78 +341,41 @@ def _a_star_helicopter_core(start, goal, terrain, wind_field, dem_lats, dem_lons
     bounds = get_bounding_box(start, goal, (rows, cols), margin_cells)
     wind_limit = WIND_BLOCK if wind_block_override is None else wind_block_override
 
-    open_set = []
-    heapq.heappush(open_set, (0.0, start))
-    came_from = {}
-    g_score = {start: 0.0}
-    blocked = 0
+    def cost_fn(cur, nbr):
+        return compute_helicopter_cost(cur, nbr, terrain, wind_field,
+                                       dem_lats, dem_lons, margin_m, size)
 
-    directions = [(-1, 0), (1, 0), (0, -1), (0, 1),
-                  (-1, -1), (-1, 1), (1, -1), (1, 1)]
+    def on_blocked(cur, nbr, goal):
+        # 비상회랑 모드: WIND_BLOCK을 일시 완화. inf로 차단된 셀이라도 실제 풍속이
+        # 완화된 임계 이하면 큰 페널티(정상의 ~5배)만 부여해 통과 허용.
+        if wind_block_override is None:
+            return None
+        ws_n = float(wind_field["ws"][nbr[0], nbr[1]])
+        if math.isfinite(ws_n) and ws_n <= wind_limit:
+            is_diag = (cur[0] != nbr[0]) and (cur[1] != nbr[1])
+            return (1.414 if is_diag else 1.0) * 5.0
+        return None
 
-    while open_set:
-        f_popped, current = heapq.heappop(open_set)
+    planner = AStarPlanner(cost_fn, heuristic, bounds, on_blocked)
+    path, explored, blocked = planner.search(start, goal)
 
-        # stale 엔트리 스킵 (decrease-key 미사용 → 더 나은 g가 이미 갱신됨)
-        if f_popped > g_score[current] + heuristic(current, goal):
-            continue
-
-        if current == goal:
-            path = []
-            node = current
-            while node in came_from:
-                path.append(node)
-                node = came_from[node]
-            path.append(start)
-            path.reverse()
-            return PathSearchResult(
-                path=smooth_path(path),
-                status="ok",
-                explored_cells=len(g_score),
-                blocked_cells=blocked,
-                message=f"goal reached (margin={margin_cells}, wind_limit={wind_limit})",
-            )
-
-        for dr, dc in directions:
-            neighbor = (current[0] + dr, current[1] + dc)
-
-            if not is_within_bounds(neighbor, bounds):
-                continue
-
-            cost = compute_helicopter_cost(current, neighbor, terrain, wind_field,
-                                           dem_lats, dem_lons, margin_m, size)
-            # 비상회랑 모드: WIND_BLOCK을 일시 완화. inf로 반환되었더라도
-            # 실제 풍속이 완화된 임계 이하면 풍속 차단을 풀고 비용을 재계산하지 않고
-            # 큰 페널티만 부여해 통과 가능하게 함 (계산 비용 절약).
-            if cost == float('inf'):
-                if wind_block_override is not None:
-                    ws_n = float(wind_field["ws"][neighbor[0], neighbor[1]])
-                    if math.isfinite(ws_n) and ws_n <= wind_limit:
-                        # 비상회랑 통과 허용: base × emergency_mult
-                        is_diag = (current[0] != neighbor[0]) and (current[1] != neighbor[1])
-                        cost = (1.414 if is_diag else 1.0) * 5.0  # 정상 비용의 ~5배
-                    else:
-                        blocked += 1
-                        continue
-                else:
-                    blocked += 1
-                    continue
-
-            tentative_g = g_score[current] + cost
-            if neighbor not in g_score or tentative_g < g_score[neighbor]:
-                came_from[neighbor] = current
-                g_score[neighbor] = tentative_g
-                f_score = tentative_g + heuristic(neighbor, goal)
-                heapq.heappush(open_set, (f_score, neighbor))
+    if path:
+        return PathSearchResult(
+            path=smooth_path(path),
+            status="ok",
+            explored_cells=explored,
+            blocked_cells=blocked,
+            message=f"goal reached (margin={margin_cells}, wind_limit={wind_limit})",
+        )
 
     # 경로 없음
-    status = "blocked_wind" if blocked > len(g_score) else "no_path"
+    status = "blocked_wind" if blocked > explored else "no_path"
     return PathSearchResult(
         path=[],
         status=status,
-        explored_cells=len(g_score),
+        explored_cells=explored,
         blocked_cells=blocked,
-        message=f"no path (explored={len(g_score)}, blocked={blocked}, "
+        message=f"no path (explored={explored}, blocked={blocked}, "
                 f"margin={margin_cells}, wind_limit={wind_limit})",
     )
 
@@ -508,72 +564,26 @@ def A_star_rescuer(start, goal, terrain, size="heavy"):
     RESCUER_MARGIN = 20
     bounds = get_bounding_box(start, goal, (rows, cols), RESCUER_MARGIN)
 
-    # 휴리스틱 사전 계산용 상수
+    # 휴리스틱 스케일: 남은 격자거리 × 셀크기 ÷ 최대속도 = 최소 소요시간(초)
+    # g(초)와 단위 일치하며 실제 비용을 과대평가하지 않아 admissible.
     h_scale = RESCUER_CELL_M / TOBLER_MAX_SPEED_MS
 
-    # A* 초기화
-    open_set = []
-    heapq.heappush(open_set, (0.0, start))
-    came_from = {}
-    g_score = {start: 0.0}
+    def cost_fn(cur, nbr):
+        return compute_rescuer_cost(cur, nbr, terrain, size)
 
-    # 8방향 이동
-    directions = [(-1, 0), (1, 0), (0, -1), (0, 1),
-                  (-1, -1), (-1, 1), (1, -1), (1, 1)]
+    def heuristic_fn(node, goal):
+        return heuristic(node, goal) * h_scale
 
-    while open_set:
-        f_popped, current = heapq.heappop(open_set)
+    def on_blocked(cur, nbr, goal):
+        # 암벽(무한 비용) 회피 — 단, 도착(조난자) 셀은 절벽이어도 진입 허용.
+        # (조난자 위치는 선택 불가. 차단하면 험지 조난자에게 경로 자체가 생성 안 됨)
+        return 9999.0 if nbr == goal else None
 
-        # stale 엔트리 스킵
-        if f_popped > g_score[current] + heuristic(current, goal) * h_scale:
-            continue
+    planner = AStarPlanner(cost_fn, heuristic_fn, bounds, on_blocked)
+    path, _, _ = planner.search(start, goal)
 
-        # 목표 도달
-        if current == goal:
-            # 경로 역추적
-            path = []
-            node = current
-            while node in came_from:
-                path.append(node)
-                node = came_from[node]
-            path.append(start)
-            path.reverse()
-            
-            # 구조대원 경로는 스무딩하지 않음 (지형 정확도 유지)
-            return path
-        
-        # 이웃 노드 탐색
-        for dr, dc in directions:
-            neighbor = (current[0] + dr, current[1] + dc)
-
-            # 바운딩 박스 확인
-            if not is_within_bounds(neighbor, bounds):
-                continue
-            
-            # 비용 계산 (보행시간 × 임상저항)
-            cost = compute_rescuer_cost(current, neighbor, terrain, size)
-
-            # 암벽(무한 비용) 회피 — 단, 도착(조난자) 셀은 절벽이어도 진입 허용.
-            # (조난자 위치는 선택 불가. 차단하면 험지 조난자에게 경로 자체가 생성 안 됨)
-            if cost == float('inf'):
-                if neighbor == goal:
-                    cost = 9999.0   # 도착 절벽: 큰 페널티지만 도달 가능
-                else:
-                    continue
-
-            tentative_g = g_score[current] + cost
-
-            # 더 나은 경로 발견
-            if neighbor not in g_score or tentative_g < g_score[neighbor]:
-                came_from[neighbor] = current
-                g_score[neighbor] = tentative_g
-                # 휴리스틱: 남은 격자거리 × 셀크기 ÷ 최대속도 = 최소 소요시간(초)
-                h = heuristic(neighbor, goal) * h_scale
-                f_score = tentative_g + h
-                heapq.heappush(open_set, (f_score, neighbor))
-    
-    # 경로 없음
-    return []
+    # 구조대원 경로는 스무딩하지 않음 (지형 정확도 유지). 빈 리스트면 경로 없음.
+    return path
 
 
 # ============================================================
