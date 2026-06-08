@@ -223,26 +223,37 @@ def infer_best_zone(gps_coord: dict, heli_size: str = "small",
         cand["latitude"].values, cand["longitude"].values, cand["wind_direction"].values)
 
     # ── 3) XGBoost 추론 (landing/hoist) + Risk Score 산출 ───────────────────
-    X = cand[FEATURE_COLUMNS].astype("float32")
-    dmat = xgb.DMatrix(X)
     models = _load_models(heli_size)
 
     best_per_tactic = {}
     for tactic in ("landing", "hoist"):
         key = f"{heli_size}_{tactic}"
+        score_col = f"static_score_{key}"
+
+        # [nan 방어] static_score(지형 기본점수)가 비어있는(nan) 후보 제외.
+        #   terrain_base.parquet의 static_score는 일부(약 45%)가 nan이라,
+        #   미처리 시 risk_score=nan이 best로 섞여 결과가 오염될 수 있음.
+        if score_col in cand.columns:
+            valid = cand[cand[score_col].notna()].copy()
+        else:
+            valid = cand.copy()
+        if valid.empty:
+            continue  # 이 전술은 유효(점수 있는) 착륙 후보 없음 → 스킵
+
+        dmat = xgb.DMatrix(valid[FEATURE_COLUMNS].astype("float32"))
         pred = models[tactic].predict(dmat)
         risk_class = pred.argmax(axis=1) if pred.ndim == 2 else pred.astype(int)
 
         d = TACTIC_WEIGHTS[key]["dynamic"]
-        risk_score = (cand[f"static_score_{key}"].values
-                      + cand["wind_score"].values * d["wind_score"]
-                      + cand["wind_dir_score"].values * d["wind_dir_score"])
+        risk_score = (valid[score_col].values
+                      + valid["wind_score"].values * d["wind_score"]
+                      + valid["wind_dir_score"].values * d["wind_dir_score"])
 
         sub = pd.DataFrame({
-            "latitude": cand["latitude"].values,
-            "longitude": cand["longitude"].values,
-            "dist_to_rescue_m": cand["dist_to_rescue_m"].values,
-            "wind_speed": cand["wind_speed"].values,
+            "latitude": valid["latitude"].values,
+            "longitude": valid["longitude"].values,
+            "dist_to_rescue_m": valid["dist_to_rescue_m"].values,
+            "wind_speed": valid["wind_speed"].values,
             "risk_class": risk_class,
             "risk_score": risk_score,
             "mode": key,
@@ -251,6 +262,11 @@ def infer_best_zone(gps_coord: dict, heli_size: str = "small",
         sub = sub.sort_values(["risk_class", "risk_score", "dist_to_rescue_m"],
                               ascending=[True, False, True])
         best_per_tactic[tactic] = sub.iloc[0]
+
+    # 두 전술 모두 유효 후보가 없으면 폴백(호출측이 휴리스틱 처리)
+    if not best_per_tactic:
+        print("  • [Stage 2/ML] 반경 내 유효 static_score 후보 없음 → 폴백")
+        return None
 
     # ── 4) landing/hoist 중 더 안전한(낮은 등급·높은 점수) 전술 선택 ─────────
     best = min(best_per_tactic.values(),
