@@ -1,5 +1,12 @@
 import os
 import sys
+import json
+import requests
+import numpy as np
+import pandas as pd
+import xgboost as xgb
+from datetime import datetime, timedelta
+from scipy.interpolate import griddata
 from dotenv import load_dotenv
 
 # 1. 인프라 및 경로 설정
@@ -15,11 +22,89 @@ for folder in config_candidates:
 sys.path.insert(0, project_root)
 sys.path.insert(0, current_dir)
 
-import pandas as pd
-import numpy as np
-import xgboost as xgb
-from weather.modules.weather import fetch_kma_realtime
-from weather.modules.data_preprocessing import mapping_live_weather_to_grid
+# weather.config가 없거나 패키지 구조가 다를 경우를 대비한 안전한 Fallback 변수 바인딩
+try:
+    from weather.config import KMA_API_KEY
+except ImportError:
+    KMA_API_KEY = os.getenv("KMA_API_KEY", "YOUR_API_KEY_HERE")
+
+# ==============================================================================
+# [ENGINE] 상단 기상청 AWS 실시간 정보 수집 및 수리 보정 모듈
+# ==============================================================================
+_SEORAK_STATIONS = {
+    90:  {"name": "속초",   "lat": 38.2506, "lon": 128.5644},
+    100: {"name": "대관령", "lat": 37.6764, "lon": 128.7183},
+    105: {"name": "강릉",   "lat": 37.7514, "lon": 128.8908},
+    211: {"name": "인제",   "lat": 38.0606, "lon": 128.1717},
+    212: {"name": "홍천",   "lat": 37.6863, "lon": 127.8883},
+}
+
+def fetch_kma_realtime(target_time: str = None):
+    """기상청 API허브 지상 AWS 관측 데이터 호출"""
+    if target_time is not None:
+        try:
+            base_dt = datetime.strptime(target_time, "%Y%m%d%H%M")
+        except ValueError:
+            raise ValueError("target_time 형식은 반드시 'YYYYMMDDHHMM' 형태여야 합니다.")
+        tm2 = base_dt.strftime("%Y%m%d%H%M")
+        tm1 = (base_dt - timedelta(minutes=10)).strftime("%Y%m%d%H%M")
+    else:
+        now = datetime.now()
+        tm2 = (now - timedelta(minutes=10)).strftime("%Y%m%d%H%M")
+        tm1 = (now - timedelta(minutes=20)).strftime("%Y%m%d%H%M")
+
+    base_url = "https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min"
+    wind_data = {}
+
+    for stn_id, stn_info in _SEORAK_STATIONS.items():
+        url = f"{base_url}?tm1={tm1}&tm2={tm2}&stn={stn_id}&disp=0&help=2&authKey={KMA_API_KEY}"
+        try:
+            res = requests.get(url, timeout=5)
+            res.raise_for_status()
+        except requests.exceptions.RequestException:
+            continue
+
+        try:
+            raw_lines = [
+                line.split() for line in res.text.splitlines()
+                if line.strip() and not line.startswith("#")
+            ]
+            if not raw_lines:
+                continue
+
+            valid = None
+            for row in reversed(raw_lines):
+                try:
+                    wd_candidate = float(row[2])
+                    ws_candidate = float(row[3])
+                except (IndexError, ValueError):
+                    continue
+                if ws_candidate < -50 or wd_candidate < -50:
+                    continue
+                if ws_candidate > 100 or wd_candidate > 360:
+                    continue
+                valid = (ws_candidate, wd_candidate)
+                break
+
+            if valid is None:
+                continue
+
+            ws, wd = valid
+            wind_data[str(stn_id)] = {
+                "ws": ws, "wd": wd, "lat": stn_info["lat"], "lon": stn_info["lon"]
+            }
+        except (IndexError, ValueError):
+            continue
+
+    return wind_data
+
+def apply_elevation_wind_correction(grid_ws, dem, work_altitude=60.0):
+    """기상청 대기 경계층 멱법칙(Power Law) 기반 지상 10m 풍속 -> 헬기 운항 고도 풍속 보정"""
+    alpha = 0.27
+    z_ref = 10.0
+    effective_altitude = dem + work_altitude
+    return grid_ws * (effective_altitude / z_ref) ** alpha
+
 
 # ==============================================================================
 # [STEP 1] 출격 헬기 기종 선택 (소형 / 대형 고정 관제)
@@ -68,7 +153,7 @@ models = {
 
 FIRE_STATION = {"latitude": 38.25, "longitude": 128.50}
 
-# 모델에 입력할 순수 날것의 10대 피처 컬럼 (치팅 스코어 전면 배제)
+# 모델에 입력할 순수 날것의 10대 피처 컬럼
 feature_columns = [
     'elevation', 'slope_deg', 'tree_density', 'tree_height',
     'wind_speed', 'wind_dir_sin', 'wind_dir_cos',
@@ -83,40 +168,74 @@ def find_best_rescue_tactics(rescue_lat: float, rescue_lon: float,
                              heli_type: str, search_radius_meters: int = 500):
     print(f"\n[작전 개시] 구조 요청 지점 (위도: {rescue_lat:.5f}, 경도: {rescue_lon:.5f}) 실황 탐색...")
 
-    try:
-        live_weather = fetch_kma_realtime()
-        candidates = mapping_live_weather_to_grid(rescue_lat, rescue_lon, live_weather, df_master, radius_km=5.0)
-    except Exception as e:
-        print(f"실시간 날씨 연산 에러({e}). 마스터 캐시 데이터로 우회 연산합니다.")
-        candidates = df_master.copy()
-
-    if candidates.empty or ("wind_speed" not in candidates.columns):
-        print("반경 내 유효 지형 데이터가 없거나 기상 피처가 유실되었습니다.")
-        return None
-
-    # 풍향 공간 인코딩 및 전처리 레이어
-    candidates['wind_direction']  = candidates['wind_direction'].fillna(0.0)
-    candidates['wind_dir_rad']    = np.radians(candidates['wind_direction'])
-    candidates['wind_dir_sin']    = np.sin(candidates['wind_dir_rad'])
-    candidates['wind_dir_cos']    = np.cos(candidates['wind_dir_rad'])
-
+    # 기본 조난자 물리적 거리 및 소방기지 거리 필터 연산
+    candidates = df_master.copy()
     candidates['dist_to_rescue']    = np.sqrt((candidates['latitude'] - rescue_lat) ** 2 + (candidates['longitude'] - rescue_lon) ** 2)
     candidates['dist_from_base_km'] = np.sqrt((candidates['latitude'] - FIRE_STATION["latitude"]) ** 2 + (candidates['longitude'] - FIRE_STATION["longitude"]) ** 2) * 110.0
 
-    # 1차 반경 필터링
+    # 🔥 [최적화 패치]: 3,000만 건 공간 보간 연산 오버헤드를 막기 위해 반경 필터링 우선 차단 가동
     candidates = candidates[candidates['dist_to_rescue'] * 110000 <= search_radius_meters].copy()
 
     # 하천 구역 안전 차단 패치
-    candidates = candidates[candidates['land_2'] != 1].copy()
+    if not candidates.empty and 'land_2' in candidates.columns:
+        candidates = candidates[candidates['land_2'] != 1].copy()
 
     if candidates.empty:
-        print(f"조난 지점 반경 {search_radius_meters}m 이내에 하천 구역을 제외한 유효 격자 데이터가 존재하지 않습니다.")
+        print(f"조난 지점 반경 {search_radius_meters}m 이내에 유효 격자 데이터가 존재하지 않습니다.")
         return None
 
+    # 🎯 [실시간 AWS 기상 공간 동적 융합 알고리즘 이식]
+    try:
+        live_weather = fetch_kma_realtime()
+        if not live_weather or len(live_weather) < 2:
+            raise ValueError("유효 기상 관측소 수 부족")
+            
+        # 관측소 데이터의 벡터 성분 변환 구조체 생성
+        stn_points = np.array([[v["lon"], v["lat"]] for v in live_weather.values()])
+        stn_ws     = np.array([v["ws"] for v in live_weather.values()])
+        stn_wd     = np.array([v["wd"] for v in live_weather.values()])
+        
+        # 풍향 데이터 각도 단절 회피를 위한 삼각함수 유클리드 공간 인코딩 (U, V 벡터 분해)
+        stn_wd_rad = np.radians(stn_wd)
+        stn_u      = -np.sin(stn_wd_rad)
+        stn_v      = -np.cos(stn_wd_rad)
+        
+        # 타겟 격자 좌표 배열 추출
+        target_coords = (candidates['longitude'].values, candidates['latitude'].values)
+        
+        # Scipy 선형(Linear) 격자 공간 보간 가동
+        grid_ws = griddata(stn_points, stn_ws, target_coords, method="linear")
+        grid_u  = griddata(stn_points, stn_u, target_coords, method="linear")
+        grid_v  = griddata(stn_points, stn_v, target_coords, method="linear")
+        
+        # Convex Hull 외곽 경계 지역 NaN 결손 발생 시 Nearest Neighbor로 보완 안정화
+        nan_mask = np.isnan(grid_ws)
+        if np.any(nan_mask):
+            grid_ws[nan_mask] = griddata(stn_points, stn_ws, target_coords, method="nearest")[nan_mask]
+            grid_u[nan_mask]  = griddata(stn_points, stn_u, target_coords, method="nearest")[nan_mask]
+            grid_v[nan_mask]  = griddata(stn_points, stn_v, target_coords, method="nearest")[nan_mask]
+            
+        # 보간된 U, V 벡터 성분을 다시 실시간 각도 디그리(0~360) 데이터로 역변환 복원
+        candidates['wind_direction'] = np.degrees(np.arctan2(-grid_u, -grid_v)) % 360.0
+        
+        # 멱법칙 고도 기상 보정 엔진 가동
+        candidates['wind_speed'] = apply_elevation_wind_correction(grid_ws, candidates['elevation'].values)
+        print(" -> [AWS 기상 융합 완료] 실시간 관측 인프라 다각 선형 보간 및 대기 경계층 멱법칙 보정 완료.")
+        
+    except Exception as e:
+        print(f"실시간 기상 인프라 보간 에러({e}). 안전 모드로 우회하여 고정 기상 필드로 대체 연산합니다.")
+        # API 오류 혹은 서포트 장애 시 모델 폭사를 방지하기 위한 보수적 가상 기상값 할당
+        candidates['wind_speed'] = 6.5
+        candidates['wind_direction'] = 270.0
+
+    # 풍향 공간 인코딩 및 전처리 레이어 (XGBoost 입력 전용 듀얼 주기 벡터 가속화)
+    candidates['wind_dir_rad'] = np.radians(candidates['wind_direction'])
+    candidates['wind_dir_sin'] = np.sin(candidates['wind_dir_rad']).astype(np.float32)
+    candidates['wind_dir_cos'] = np.cos(candidates['wind_dir_rad']).astype(np.float32)
+
     # 실시간 정풍 평점 동적 계산
-    delta_lat      = candidates['latitude']  - FIRE_STATION["latitude"]
-    delta_lon      = candidates['longitude'] - FIRE_STATION["longitude"]
-    flight_heading = np.degrees(np.arctan2(delta_lon, delta_lat)) % 360
+    flight_heading = np.degrees(np.arctan2(candidates['longitude'] - FIRE_STATION["longitude"], 
+                                           candidates['latitude'] - FIRE_STATION["latitude"])) % 360
     angle_diff     = np.abs(flight_heading - candidates['wind_direction']) % 360
     candidates['wind_dir_score'] = np.select(
         [(angle_diff < 45) | (angle_diff >= 315), (angle_diff >= 135) & (angle_diff < 225)],
@@ -126,8 +245,7 @@ def find_best_rescue_tactics(rescue_lat: float, rescue_lon: float,
     # 고도 구간별 3단계 격리 인코딩 적용 및 스코어 매핑
     ELEVATION_MAP = {0: 1.0, 1: 0.70, 2: 0.35}
     elevation_grade = np.select(
-        [candidates['elevation'] < 500,
-         (candidates['elevation'] >= 500) & (candidates['elevation'] < 1200)],
+        [candidates['elevation'] < 500, (candidates['elevation'] >= 500) & (candidates['elevation'] < 1200)],
         [0, 1], default=2
     )
     candidates['elevation_score'] = np.vectorize(ELEVATION_MAP.get)(elevation_grade).astype('float32')
@@ -205,7 +323,6 @@ def find_best_rescue_tactics(rescue_lat: float, rescue_lon: float,
             print(f" {rank}순위 추천지 -> 좌표: ({r['latitude']:.5f}, {r['longitude']:.5f})")
             print(f"    [전술 거리] 조난자까지: 약 {r['dist_to_rescue'] * 110000:.1f}m | 소방기지로부터: 약 {r['dist_from_base_km']:.2f}km")
             print(f"    [AI 안전성] 등급: {target_labels[int(r['pred_landing'])]} | 전술 적합도 점수: {r['score_landing']:.4f}점")
-            # 🎯 [수정]: 지형고도점수 출력을 지우고 순수 계측고도 수치만 출력하도록 정돈
             print(f"    [현장 실황] 풍속: {r['wind_speed']:.1f}m/s ({w_rel}) | 계측고도: {r['elevation']:.1f}m")
             print("-" * 80)
     else:
@@ -216,12 +333,12 @@ def find_best_rescue_tactics(rescue_lat: float, rescue_lon: float,
     print("-" * 115)
     if not best_hoist.empty:
         for rank, (_, r) in enumerate(best_hoist.iterrows(), 1):
+            w_rel = w_map.get(r['wind_dir_score'], '측풍')
             orig_land = 0 if r.get('land_0', 0) == 1 else (1 if r.get('land_1', 0) == 1 else 2)
             print(f" {rank}순위 구조지 -> 좌표: ({r['latitude']:.5f}, {r['longitude']:.5f})")
             print(f"    [전술 거리] 조난자까지: 약 {r['dist_to_rescue'] * 110000:.1f}m | 소방기지로부터: 약 {r['dist_from_base_km']:.2f}km")
             print(f"    [AI 안전성] 등급: {target_labels[int(r['pred_hoist'])]} | 전술 적합도 점수: {r['score_hoist']:.4f}점")
-            # 🎯 [수정]: 끝부분의 지형고도점수 매핑 텍스트를 지우고 깔끔하게 마무리
-            print(f"    [현장 실황] 풍속: {r['wind_speed']:.1f}m/s | 수목 높이등급: {int(r['tree_height'])} | 수목밀도: {int(r['tree_density'])} | 지형형태: {orig_land} | 계측고도: {r['elevation']:.1f}m")
+            print(f"    [현장 실황] 풍속: {r['wind_speed']:.1f}m/s ({w_rel}) | 수목 높이등급: {int(r['tree_height'])} | 수목밀도: {int(r['tree_density'])} | 지형형태: {orig_land} | 계측고도: {r['elevation']:.1f}m")
             print("-" * 80)
     else:
         print(" 현재 조건 및 지형 제약 하에 안전한 호이스트 작전 공간이 없습니다.")
@@ -231,13 +348,12 @@ def find_best_rescue_tactics(rescue_lat: float, rescue_lon: float,
 
 
 # ==============================================================================
-# 무작위 조난 지점 샘플링 후 작전 가동
+# 고정된 테스트 좌표를 기반으로 실시간 기상 연동 작전 가동
 # ==============================================================================
-sample_rescue_point = df_master.sample(1)
-example_lat = sample_rescue_point['latitude'].values[0]
-example_lon = sample_rescue_point['longitude'].values[0]
+example_lat = 38.1270
+example_lon = 128.4662
 
-print(f"[무작위 매칭] 마스터 맵에서 추출된 실제 테스트 구조 지점:")
+print(f"[검증 가동] 지정된 고유 테스트 구조 요청 지점:")
 print(f"위도: {example_lat:.5f}, 경도: {example_lon:.5f}")
 
 l_spots, h_spots = find_best_rescue_tactics(

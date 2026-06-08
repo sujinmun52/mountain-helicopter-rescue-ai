@@ -147,6 +147,7 @@ def print_mission_report(victim_gps, analysis, wind_speed, landing_point):
     else:
         report += "    🟢 개활지 충분 - 착륙 용이\n"
 
+    report += f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 💨 기상 조건 (Weather Conditions)
@@ -164,6 +165,7 @@ def print_mission_report(victim_gps, analysis, wind_speed, landing_point):
         report += "  상태: 🔴 위험 - 호이스트 작업 제한\n"
         safety = "DANGER"
 
+    report += f"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 🎯 호이스트 착륙지점 선정 (Landing Site Selection)
