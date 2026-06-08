@@ -20,7 +20,7 @@
 - **OS/Shell**: Windows 11 / PowerShell (`$null`, `$env:VAR`, 백틱 줄바꿈 사용)
 - **의존성 설치**: `pip install -r requirements.txt`
   - ⚠️ `requirements.txt`에 현재 `numpy scipy pandas requests folium python-dotenv scikit-learn`만 있음.
-    XGBoost/LightGBM 모델 추론이 필요하면 `xgboost`, `lightgbm`을 별도 설치/추가해야 한다.
+    XGBoost 모델 추론에 `xgboost`(+ parquet용 `pyarrow`)를 별도 설치/추가해야 한다.
 - **API 키**: 기상청 KMA API 키는 `.env`(`KMA_API_KEY=...`)로 로드. `.env`는 **읽기/수정/커밋 금지**.
 - **실행 명령**: `python main.py` (4단계 파이프라인: 지형→구조구역→경로→시각화 오케스트레이터).
   - 데이터 경로가 `data/...` 상대경로이므로 **반드시 레포 루트(cwd=AISystem)에서 실행**한다.
@@ -28,9 +28,11 @@
 ## 활성 코드 트리 (중요)
 - **실제 개발/실행 대상은 레포 루트**: `modules/`, `config.py`, `data/`, `outputs/`, `tests/`.
   - `rescue_zone.py`, `weather_interpolation.py`는 **루트 `modules/`에만** 존재 → 루트가 최신 활성본이다.
-- `XGBoost_Model/`, `RF_Model/`, `LightGBM_Model/` 하위의 `weather/modules/`는 **오래된 복사본**이다.
+- `XGBoost_Model/weather/modules/`는 **오래된 복사본**이다.
   수정은 루트 `modules/`에 하고, 중복 트리는 임의로 건드리지 않는다.
-- ⚠️ `RF_Model/`·`LightGBM_Model/` 트리는 **향후 정리(삭제) 예정**이나, **내가 명시적으로 지시하기 전까지 삭제하지 말 것**.
+  - 단, `XGBoost_Model/weather/modules/{weather.py, data_preprocessing.py}`와 `weather/config.py`는
+    학습 데이터 생성(`preprocess/batch_runner.py`)·추론(`3.xgb_inference.py`)이 참조하므로 **보존**한다.
+- ✅ `RF_Model/`·`LightGBM_Model/` 트리는 **삭제 완료**(2026-06-09, 죽은 복사본 정리). 활성 코드는 루트로 단일화됨.
 
 ## 프로젝트 구조 (루트 기준)
 ```
@@ -77,7 +79,7 @@ legacy/                    # 미사용 보관 스크립트 — 수정 대상 아
 
 ## 금지 사항
 - `.env` 읽기/수정/커밋 금지.
-- `legacy/` 및 비활성 모델 트리(`*_Model/weather/`) 임의 수정 금지. (`RF_Model/`·`LightGBM_Model/`는 지시 전 삭제 금지)
+- `legacy/` 및 비활성 복사본 트리(`XGBoost_Model/weather/`) 임의 수정 금지. (단, 학습이 참조하는 `weather/modules/{weather,data_preprocessing}.py`·`weather/config.py`는 보존)
 - 데이터 파일(CSV/DEM/parquet) 임의 변경 금지.
 - **Feature 컬럼의 순서·이름 임의 변경 금지** (학습↔추론 불일치를 유발).
 - **학습된 모델 파일(`*.ubj`/`*.joblib`) 덮어쓰기·재학습 금지** — 재학습은 명시적 지시가 있을 때만.
