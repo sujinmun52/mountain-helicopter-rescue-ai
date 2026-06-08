@@ -314,13 +314,16 @@ def stage1_patient_intake(victim_csv_path):
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║  [Stage 2] AI 구조구역 선정 (MOCK) — modules/rescue_zone.py 셸 호출      ║
 # ╚══════════════════════════════════════════════════════════════════════╝
-def stage2_select_rescue_zone(victim_gps, grid_bundle, radius_m=RESCUE_RADIUS_M):
+def stage2_select_rescue_zone(victim_gps, grid_bundle, heli_size="small",
+                              radius_m=RESCUE_RADIUS_M):
     """
-    500 m 반경 격자를 추출해 Stage 2 셸(select_rescue_zone)에 전달하고,
+    500 m 반경 격자를 추출해 Stage 2(select_rescue_zone)에 전달하고,
     목적지 노드(착륙/호이스트 지점)를 돌려받는다.
-    ⚠ 실제 ML 통합 시에도 이 함수는 변경 불필요 — 셸 내부만 교체.
+
+    Args:
+        heli_size : "small" | "large" — 사용할 기종(XGBoost 모델 선택)
     """
-    print("\n[Stage 2] AI 구조구역 선정 (현재: MOCK)")
+    print("\n[Stage 2] AI 구조구역 선정 (XGBoost 추론)")
     mask = _radius_mask(victim_gps, grid_bundle["dem_lats"], grid_bundle["dem_lons"], radius_m)
     grid_data = {
         "radius_m": radius_m,
@@ -330,7 +333,7 @@ def stage2_select_rescue_zone(victim_gps, grid_bundle, radius_m=RESCUE_RADIUS_M)
         "dem_array": grid_bundle["dem_array"],
         "terrain": grid_bundle["terrain"],
     }
-    return select_rescue_zone(victim_gps, grid_data)   # ← ML 교체 지점
+    return select_rescue_zone(victim_gps, grid_data, heli_size=heli_size)
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
@@ -428,8 +431,12 @@ def stage4_visualization(victim_gps, destination, route, grid_bundle):
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                     4단계 파이프라인 오케스트레이터                      ║
 # ╚══════════════════════════════════════════════════════════════════════╝
-def run_pipeline(victim_csv_path: str):
-    """Stage 1 → 2(MOCK) → 3 → 4 데이터 흐름 실행."""
+def run_pipeline(victim_csv_path: str, heli_size: str = "small"):
+    """Stage 1 → 2(XGBoost) → 3 → 4 데이터 흐름 실행.
+
+    Args:
+        heli_size : "small" | "large" — Stage 2에서 사용할 기종(모델 선택)
+    """
     # Stage 1
     victim_gps = stage1_patient_intake(victim_csv_path)
 
@@ -438,8 +445,8 @@ def run_pipeline(victim_csv_path: str):
     if grid_bundle is None:
         return
 
-    # Stage 2 (MOCK) → 목적지 노드
-    destination = stage2_select_rescue_zone(victim_gps, grid_bundle)
+    # Stage 2 (XGBoost 추론) → 목적지 노드
+    destination = stage2_select_rescue_zone(victim_gps, grid_bundle, heli_size=heli_size)
 
     # Stage 3 → 경로 + ETA
     route = stage3_path_modeling(victim_gps, destination, grid_bundle)

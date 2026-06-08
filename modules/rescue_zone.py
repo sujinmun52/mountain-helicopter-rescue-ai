@@ -38,12 +38,19 @@ import numpy as np
 from modules.hoist import haversine
 
 
-def select_rescue_zone(gps_coord, grid_data):
+def select_rescue_zone(gps_coord, grid_data, heli_size="small"):
     """
-    [Stage 2 셸] 500 m 반경 격자를 받아 '최적 착륙/호이스트 지점'(목적지 노드)을 반환.
+    [Stage 2] 500 m 반경 격자를 받아 '최적 착륙/호이스트 지점'(목적지 노드)을 반환.
 
-    현재는 ML 미통합 상태이므로 더미 결과를 돌려준다(is_mock=True).
-    실제 ML 추론으로 교체할 때는 아래 [MOCK 로직] 블록 내부만 바꾸면 된다.
+    XGBoost 4모드 추론(modules.rescue_zone_inference)을 사용하며, 추론이 불가능하면
+    (모델/parquet 부재·예외) 기존 비-ML 휴리스틱으로 폴백해 파이프라인을 보호한다.
+
+    Args:
+        gps_coord : {"latitude": float, "longitude": float}
+        grid_data : dem_lats/dem_lons/dem_array/terrain/radius_mask/radius_m 묶음
+        heli_size : "small" | "large" — 사용할 기종(모델 선택)
+
+    OUT 계약(불변): {row, col, latitude, longitude, distance_m, mode, score, is_mock}
     """
     victim_lat = gps_coord["latitude"]
     victim_lon = gps_coord["longitude"]
@@ -56,19 +63,51 @@ def select_rescue_zone(gps_coord, grid_data):
 
     # ── 수신 로깅: 500 m 격자 데이터를 정상 수신했는지 확인 ──────────────────
     n_cells = int(np.count_nonzero(mask))
-    print(f"[Stage 2/MOCK] 구조구역 선정 셸 호출")
+    print(f"[Stage 2] 구조구역 선정 (XGBoost, 기종={heli_size})")
     print(f"  • 수신: 조난자 GPS=({victim_lat:.5f}, {victim_lon:.5f}), 반경={radius_m:.0f}m")
-    print(f"  • 수신: 반경 내 지형 격자 셀 {n_cells}개 (slope/TRI/임상 피처 포함)")
-    if n_cells == 0:
-        print("  • [경고] 반경 내 격자가 없어 조난자 위치를 목적지로 폴백합니다.")
+    print(f"  • 수신: 반경 내 지형 격자 셀 {n_cells}개")
 
     # ══════════════════════════════════════════════════════════════════════
-    # [MOCK 로직 시작]  ⚠ 팀 ML 추론 코드 준비 시 이 블록 '내부'만 교체
-    #   - 실제 ML: grid_data 의 피처(slope, TRI, tree_density/height, land_cover)를
-    #     입력으로 4모드 분류·회귀를 수행해 최적 노드를 반환할 예정.
-    #   - 현재 더미: 반경 내 '개활지 & 최소 경사' 셀 1개를 고르는 비-ML 단순 휴리스틱.
-    #     (파이프라인 연결 검증용일 뿐, AI 판단이 아님)
+    # [실 추론] XGBoost 4모드 엔진 호출 → 최적 좌표(lat/lon) 산출
+    #   학습과 동일한 terrain_base.parquet 인코딩으로 추론하고(학습=추론 정합성),
+    #   결과 좌표를 아래에서 dem 격자 (row,col)로 역매핑해 OUT 계약을 충족한다.
     # ══════════════════════════════════════════════════════════════════════
+    try:
+        from modules.rescue_zone_inference import infer_best_zone
+        zone = infer_best_zone(gps_coord, heli_size=heli_size, radius_m=radius_m)
+    except Exception as e:
+        print(f"  • [경고] ML 추론 모듈 호출 실패({e}) → 휴리스틱 폴백")
+        zone = None
+
+    if zone is not None:
+        # lat/lon → 가장 가까운 dem 격자 (row,col) 역매핑
+        d2 = (dem_lats - zone["latitude"])**2 + (dem_lons - zone["longitude"])**2
+        r, c = np.unravel_index(np.argmin(d2), d2.shape)
+        r, c = int(r), int(c)
+        dest_lat = float(dem_lats[r, c])
+        dest_lon = float(dem_lons[r, c])
+        dist_m = float(haversine(victim_lat, victim_lon, dest_lat, dest_lon))
+
+        risk_label = {0: "안전", 1: "주의", 2: "위험"}.get(zone["risk_class"], "?")
+        print(f"  • [AI] 모드={zone['mode']} | 안전등급={risk_label}({zone['risk_class']}) "
+              f"| RiskScore={zone['score']:.3f} | 풍속={zone['wind_speed']:.1f}m/s")
+        print(f"  • 반환(목적지 노드): ({dest_lat:.5f}, {dest_lon:.5f}) "
+              f"grid=({r},{c}), 조난자까지 {dist_m:.0f}m")
+        return {
+            "row": r, "col": c,
+            "latitude": dest_lat, "longitude": dest_lon,
+            "distance_m": dist_m,
+            "mode": zone["mode"], "score": zone["score"],
+            "risk_class": zone["risk_class"],
+            "is_mock": False,
+        }
+
+    # ══════════════════════════════════════════════════════════════════════
+    # [폴백 휴리스틱] 추론 불가 시: 반경 내 '개활지 & 최소 경사' 셀 1개 선택
+    #   (AI 판단이 아니라 파이프라인 연결 보호용)
+    # ══════════════════════════════════════════════════════════════════════
+    if n_cells == 0:
+        print("  • [경고] 반경 내 격자가 없어 조난자 위치를 목적지로 폴백합니다.")
     slope = terrain["slope"]
     is_open = terrain.get("is_open", np.ones_like(slope, dtype=bool))
 
@@ -76,16 +115,9 @@ def select_rescue_zone(gps_coord, grid_data):
     if not np.any(candidate_mask):
         candidate_mask = mask if n_cells > 0 else np.ones_like(slope, dtype=bool)
 
-    # 후보 중 경사 최소 셀 선택 (큰 값으로 마스킹 후 argmin)
     masked_slope = np.where(candidate_mask, slope, np.inf)
     r, c = np.unravel_index(np.argmin(masked_slope), masked_slope.shape)
     r, c = int(r), int(c)
-
-    mock_mode  = "H_Light"   # 더미: 호이스트-소형 가정 (ML 이 실제 모드 결정 예정)
-    mock_score = 0.5         # 더미: 중립 위험점수 (ML 이 실제 점수 산출 예정)
-    # ══════════════════════════════════════════════════════════════════════
-    # [MOCK 로직 끝]
-    # ══════════════════════════════════════════════════════════════════════
 
     dest_lat = float(dem_lats[r, c])
     dest_lon = float(dem_lons[r, c])
@@ -95,9 +127,9 @@ def select_rescue_zone(gps_coord, grid_data):
         "row": r, "col": c,
         "latitude": dest_lat, "longitude": dest_lon,
         "distance_m": dist_m,
-        "mode": mock_mode, "score": mock_score,
+        "mode": "H_Light", "score": 0.5,
         "is_mock": True,
     }
-    print(f"  • 반환(더미 목적지 노드): ({dest_lat:.5f}, {dest_lon:.5f}) "
+    print(f"  • [폴백] 반환(휴리스틱 목적지 노드): ({dest_lat:.5f}, {dest_lon:.5f}) "
           f"grid=({r},{c}), 경사={slope[r, c]:.1f}°, 조난자까지 {dist_m:.0f}m")
     return destination
