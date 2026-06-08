@@ -1,0 +1,7 @@
+numpy
+scipy
+pandas
+requests
+folium
+python-dotenv
+scikit-learn
