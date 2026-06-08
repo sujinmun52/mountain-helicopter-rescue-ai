@@ -8,12 +8,15 @@ from modules.hoist import haversine
 
 def create_helicopter_mission_folium_map(full_path, dem_lats, dem_lons, dem_array, path_penalties,
                                         fire_station, landing_point, victim_gps, terrain,
-                                        flight_path=None):
+                                        flight_path=None,
+                                        flight_eta_min=None, walk_eta_min=None,
+                                        transit_eta_min=None):
     """
     Folium을 사용한 헬기 미션 플래닝 지도
     실제 지형 기반 패널티 시각화
 
     flight_path: 119 → 착륙지점 비행 경로 [{lat, lon, alt_m, ...}]. 주황 점선으로 표시.
+    flight_eta_min / walk_eta_min / transit_eta_min: 미션 ETA(분). None이면 범례 ETA 박스 생략.
     """
 
     # 중심점 설정
@@ -170,7 +173,12 @@ def create_helicopter_mission_folium_map(full_path, dem_lats, dem_lons, dem_arra
             • 119→착륙: {haversine(fire_station['latitude'], fire_station['longitude'], landing_point['latitude'], landing_point['longitude'])/1000:.2f}km<br>
             • 착륙→조난자: {landing_point['distance_m']/1000:.2f}km<br>
         </div>
-        
+        {("<div style='margin: 8px 0; padding: 8px; background: #e8f5e9; border-left: 4px solid #2e7d32; border-radius: 4px; font-size: 12px;'>"
+          "<b>⏱ 이동 ETA (호이스트 제외)</b><br>"
+          f"• 비행 (119→착륙): {flight_eta_min:.1f}분<br>"
+          f"• 도보 (착륙→조난자): {walk_eta_min:.1f}분<br>"
+          f"• <b>합계: {transit_eta_min:.1f}분</b>"
+          "</div>") if (flight_eta_min is not None and walk_eta_min is not None and transit_eta_min is not None) else ""}
         <div style="margin: 8px 0; padding: 8px; background: #f0f0f0; border-radius: 4px; font-size: 12px;">
             <b>고도</b><br>
             • 조난자: {victim_height:.0f}m<br>

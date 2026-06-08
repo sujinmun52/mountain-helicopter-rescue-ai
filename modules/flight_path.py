@@ -105,6 +105,26 @@ def make_flight_path(
     return path
 
 
+def estimate_flight_time(flight_path: list[dict], cruise_speed_ms: float) -> float:
+    """
+    119 → 착륙지점 비행 소요시간(분) 추정.
+
+    누적 거리(flight_path[-1]['dist_m'])를 순항속도로 나눈 단순 계산.
+    이륙·착륙 ramp 구간의 속도 저하는 보수적 cruise_speed_ms 값으로 흡수.
+
+    Args:
+        flight_path: make_flight_path / flight_path_from_grid 반환 dict 리스트
+        cruise_speed_ms: 헬기 순항속도(m/s). 통상 config.HELI_CRUISE_SPEED_MS
+
+    Returns:
+        float 비행 소요시간(분). 빈 경로면 0.0
+    """
+    if not flight_path or cruise_speed_ms <= 0:
+        return 0.0
+    total_m = float(flight_path[-1].get("dist_m", 0.0))
+    return total_m / cruise_speed_ms / 60.0
+
+
 def flight_path_from_grid(grid_path, dem_lats, dem_lons, dem_array,
                           margin_m: float = DEFAULT_MARGIN_M) -> list[dict]:
     """

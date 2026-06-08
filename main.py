@@ -18,7 +18,7 @@ from modules.weather import fetch_kma_realtime
 from modules.weather_interpolation import build_wind_field_terrain_aware
 from modules.rescue_zone import select_rescue_zone           # [Stage 2] ML 셸(MOCK)
 from modules.hoist import haversine
-from modules.flight_path import make_flight_path, flight_path_from_grid  # 119→착륙 비행경로
+from modules.flight_path import make_flight_path, flight_path_from_grid, estimate_flight_time  # 119→착륙 비행경로
 
 # 구조대 베이스(출발지) — 119 소방구급센터 (설악산 북쪽 인제 소방서)
 FIRE_STATION = {"latitude": 38.25, "longitude": 128.50, "name": "인제 소방서"}
@@ -442,10 +442,16 @@ def stage3_path_modeling(victim_gps, destination, grid_bundle):
                                "penalty": penalty})
 
     eta_min = estimate_path_time(full_path, terrain, dem_lats, dem_lons)
-    print(f"  • 도보 노드 수: {len(full_path)}, 예상 소요시간(도보 ETA): {eta_min:.1f}분")
+    from config import HELI_CRUISE_SPEED_MS
+    flight_eta_min = estimate_flight_time(flight_path, HELI_CRUISE_SPEED_MS)
+    transit_eta_min = flight_eta_min + eta_min  # 호이스트 제외 이동 ETA 합계
+    print(f"  • 도보 노드 수: {len(full_path)}, 도보 ETA: {eta_min:.1f}분")
+    print(f"  • 비행 ETA: {flight_eta_min:.1f}분 (순항 {HELI_CRUISE_SPEED_MS:.0f}m/s 가정)")
+    print(f"  • 이동 합계 ETA(비행+도보, 호이스트 제외): {transit_eta_min:.1f}분")
 
     return {"full_path": full_path, "path_penalties": path_penalties,
             "wind_field": wind_field, "eta_min": eta_min,
+            "flight_eta_min": flight_eta_min, "transit_eta_min": transit_eta_min,
             "flight_path": flight_path}
 
 
@@ -467,7 +473,10 @@ def stage4_visualization(victim_gps, destination, route, grid_bundle):
     print("  • Folium 헬기 미션 지도 생성 중...")
     create_helicopter_mission_folium_map(full_path, dem_lats, dem_lons, dem_array, path_penalties,
                                          FIRE_STATION, destination, victim_gps, terrain,
-                                         flight_path=flight_path)
+                                         flight_path=flight_path,
+                                         flight_eta_min=route["flight_eta_min"],
+                                         walk_eta_min=route["eta_min"],
+                                         transit_eta_min=route["transit_eta_min"])
     # Plotly 3D / 2D 는 '보조' 지도 — 미설치/오류 시 핵심 산출물을 막지 않도록 graceful skip
     print("  • Plotly 3D / 2D 보조 지도 생성 중...")
     try:
