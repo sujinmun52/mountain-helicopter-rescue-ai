@@ -14,7 +14,9 @@
 
 import numpy as np
 import heapq
-from math import tan, radians, exp, sqrt, cos
+import math
+from dataclasses import dataclass, field
+from math import tan, radians, exp, sqrt, cos, acos, degrees
 from modules.hoist import haversine
 from modules.risk_scoring import (step_wind_dir_risk, step_wind_speed_risk,
                                   step_density_risk, step_height_risk)
@@ -24,6 +26,43 @@ from config import WIND_BLOCK
 # ============================================================
 # [공통] 휴리스틱 및 유틸리티 함수
 # ============================================================
+
+# 설악산 DEM 격자 셀 크기 (≈10m). 모든 거리 환산의 단일 출처.
+DEM_CELL_M = 10.0
+
+
+@dataclass
+class PathSearchResult:
+    """
+    경로 탐색 결과. 빈 path만 반환하던 기존 방식을 대체.
+
+    호출부는 .path만 써도 기존 동작과 동일하며, .status / .escalation_level
+    로 폴백 단계와 실패 원인을 구분해 관제 알림·로깅에 사용 가능.
+
+    Fields:
+        path: 경로 좌표 리스트. 빈 리스트면 실패.
+        status:
+            "ok"               - 정상 탐색 성공
+            "no_path"          - 탐색 종료까지 경로 없음 (원인 불명)
+            "blocked_wind"     - 다수 셀이 풍속 차단으로 탐색 실패
+            "all_blocked"      - 출발/목표 인접까지 전부 차단
+            "fallback_straight"- 직선 보간 폴백 적용
+        escalation_level: 0=기본, 1=마진확장, 2=비상회랑, 3=직선폴백
+        explored_cells: closed 카운트 (탐색한 셀 수)
+        blocked_cells:  cost==inf 로 거른 셀 수 (강풍/절벽 통계)
+        message:        사람이 읽을 수 있는 한 줄 사유
+    """
+    path: list = field(default_factory=list)
+    status: str = "no_path"
+    escalation_level: int = 0
+    explored_cells: int = 0
+    blocked_cells: int = 0
+    message: str = ""
+
+    def __bool__(self):
+        """`if result:` 패턴으로 경로 존재 여부 직접 확인 가능."""
+        return bool(self.path)
+
 
 def heuristic(a, b):
     """
@@ -79,7 +118,8 @@ HELI_MARGIN_CELLS = 50     # 바운딩 박스 마진 (셀)
 W_WIND_DIR = 0.6           # 풍향(정/측/배) 위험 영향
 W_WIND_SPD = 0.5           # 풍속 위험 영향
 W_TURB     = 0.3           # 능선 난류 영향
-W_CLIMB    = 0.03          # 고도변화(엔진부하) 페널티 (m당)
+W_CLIMB    = 0.3           # 고도변화(엔진부하) 페널티 (수직 1셀 등반당)
+                           # 기존 0.03/m × 10m셀 = 0.3/셀과 동치 (차원 통일 후 재표기)
 
 
 def _unit(vx, vy):
@@ -119,9 +159,9 @@ def compute_helicopter_cost(current, neighbor, terrain, wind_field,
     is_diagonal = (r1 != r2) and (c1 != c2)
     base = 1.414 if is_diagonal else 1.0
 
-    # [2] 풍속 차단
+    # [2] 풍속 차단 (NaN/Inf 셀도 차단)
     ws = float(wind_field["ws"][r2, c2])
-    if ws > WIND_BLOCK:
+    if not math.isfinite(ws) or ws > WIND_BLOCK:
         return float('inf')
 
     # [3] 풍향 위험 — 진행방향 vs 바람이 '불어오는' 방향(-u,-v)
@@ -131,7 +171,7 @@ def compute_helicopter_cost(current, neighbor, terrain, wind_field,
     tvx, tvy = _unit(d_east, d_north)
     wfx, wfy = _unit(-float(wind_field["u"][r2, c2]), -float(wind_field["v"][r2, c2]))
     dot = max(-1.0, min(1.0, tvx * wfx + tvy * wfy))
-    angle_off = float(np.degrees(np.arccos(dot)))   # 0=정풍, 180=배풍
+    angle_off = degrees(acos(dot))   # 0=정풍, 180=배풍
     wd_risk = step_wind_dir_risk(angle_off, size)
     ws_risk = step_wind_speed_risk(ws, size)
     wind_mult = 1.0 + W_WIND_DIR * wd_risk + W_WIND_SPD * ws_risk
@@ -140,9 +180,11 @@ def compute_helicopter_cost(current, neighbor, terrain, wind_field,
     turb_mult = 1.0 + (W_TURB if terrain["is_ridge"][r2, c2] else 0.0)
 
     # [5] 등반 페널티 (지형추종 고도변화 = 엔진부하)
+    # 차원 통일: |Δalt(m)| / DEM_CELL_M → "고도차를 격자 단위로 환산" 후 W_CLIMB 곱
+    # base(격자단위)와 단위가 일치하여 셀 크기 변경 시에도 의미 보존.
     alt_curr = float(terrain["dem"][r1, c1]) + margin_m
     alt_nbr = float(terrain["dem"][r2, c2]) + margin_m
-    climb_penalty = abs(alt_nbr - alt_curr) * W_CLIMB
+    climb_penalty = abs(alt_nbr - alt_curr) / DEM_CELL_M * W_CLIMB
 
     return base * wind_mult * turb_mult + climb_penalty
 
@@ -183,44 +225,44 @@ def smooth_path(path):
     return smoothed
 
 
-def A_star_helicopter(start, goal, terrain, wind_field, dem_lats, dem_lons,
-                      margin_m=150.0, size="heavy"):
+def _a_star_helicopter_core(start, goal, terrain, wind_field, dem_lats, dem_lons,
+                            margin_m=150.0, size="heavy",
+                            margin_cells=HELI_MARGIN_CELLS,
+                            wind_block_override=None):
     """
-    [헬기 전용 A* 경로 탐색] 바운딩 박스 최적화 + 실제 풍황 비용.
+    [내부] 헬기 A* 핵심 루프. margin_cells / wind_block_override를 받아
+    fail-safe wrapper가 단계별 재호출할 수 있도록 분리.
 
-    60만 셀 전체 대신 출발-목표 주변만 탐색. 최종 경로는 스무딩 처리.
-    풍속>WIND_BLOCK 셀은 비용 inf로 자동 회피. 휴리스틱은 격자 직선거리
-    (모든 비용 ≥ 격자거리이므로 admissible → 최적성 보장).
-
-    Args:
-        start, goal: (row, col)
-        terrain: dict with "dem", "slope", "is_ridge"
-        wind_field: dict with "ws", "u", "v"
-        dem_lats, dem_lons: 격자 위경도
-        margin_m: 지형추종 안전마진(m)
-        size: "light" | "heavy"
+    wind_block_override가 주어지면 해당 임계치를 적용 (compute_helicopter_cost
+    를 그대로 두기 위해 wind_field["ws"] 검사를 여기서 사전 수행).
 
     Returns:
-        list of (row, col) (스무딩된 비행 경로, 빈 리스트면 경로 없음 → 호출부 폴백)
+        PathSearchResult
     """
     rows, cols = terrain["dem"].shape
-    bounds = get_bounding_box(start, goal, (rows, cols), HELI_MARGIN_CELLS)
+
+    for name, pos in (("start", start), ("goal", goal)):
+        if not (0 <= pos[0] < rows and 0 <= pos[1] < cols):
+            raise ValueError(f"A_star_helicopter: {name}={pos} out of grid {rows}x{cols}")
+
+    bounds = get_bounding_box(start, goal, (rows, cols), margin_cells)
+    wind_limit = WIND_BLOCK if wind_block_override is None else wind_block_override
 
     open_set = []
     heapq.heappush(open_set, (0.0, start))
     came_from = {}
     g_score = {start: 0.0}
-    closed_set = set()
+    blocked = 0
 
     directions = [(-1, 0), (1, 0), (0, -1), (0, 1),
                   (-1, -1), (-1, 1), (1, -1), (1, 1)]
 
     while open_set:
-        _, current = heapq.heappop(open_set)
+        f_popped, current = heapq.heappop(open_set)
 
-        if current in closed_set:
+        # stale 엔트리 스킵 (decrease-key 미사용 → 더 나은 g가 이미 갱신됨)
+        if f_popped > g_score[current] + heuristic(current, goal):
             continue
-        closed_set.add(current)
 
         if current == goal:
             path = []
@@ -230,20 +272,38 @@ def A_star_helicopter(start, goal, terrain, wind_field, dem_lats, dem_lons,
                 node = came_from[node]
             path.append(start)
             path.reverse()
-            return smooth_path(path)
+            return PathSearchResult(
+                path=smooth_path(path),
+                status="ok",
+                explored_cells=len(g_score),
+                blocked_cells=blocked,
+                message=f"goal reached (margin={margin_cells}, wind_limit={wind_limit})",
+            )
 
         for dr, dc in directions:
             neighbor = (current[0] + dr, current[1] + dc)
 
-            if neighbor in closed_set:
-                continue
             if not is_within_bounds(neighbor, bounds):
                 continue
 
             cost = compute_helicopter_cost(current, neighbor, terrain, wind_field,
                                            dem_lats, dem_lons, margin_m, size)
-            if cost == float('inf'):   # 강풍 차단 셀
-                continue
+            # 비상회랑 모드: WIND_BLOCK을 일시 완화. inf로 반환되었더라도
+            # 실제 풍속이 완화된 임계 이하면 풍속 차단을 풀고 비용을 재계산하지 않고
+            # 큰 페널티만 부여해 통과 가능하게 함 (계산 비용 절약).
+            if cost == float('inf'):
+                if wind_block_override is not None:
+                    ws_n = float(wind_field["ws"][neighbor[0], neighbor[1]])
+                    if math.isfinite(ws_n) and ws_n <= wind_limit:
+                        # 비상회랑 통과 허용: base × emergency_mult
+                        is_diag = (current[0] != neighbor[0]) and (current[1] != neighbor[1])
+                        cost = (1.414 if is_diag else 1.0) * 5.0  # 정상 비용의 ~5배
+                    else:
+                        blocked += 1
+                        continue
+                else:
+                    blocked += 1
+                    continue
 
             tentative_g = g_score[current] + cost
             if neighbor not in g_score or tentative_g < g_score[neighbor]:
@@ -252,8 +312,84 @@ def A_star_helicopter(start, goal, terrain, wind_field, dem_lats, dem_lons,
                 f_score = tentative_g + heuristic(neighbor, goal)
                 heapq.heappush(open_set, (f_score, neighbor))
 
-    # 경로 없음 (local minima / 전 구간 강풍) → 호출부에서 직선 폴백
-    return []
+    # 경로 없음
+    status = "blocked_wind" if blocked > len(g_score) else "no_path"
+    return PathSearchResult(
+        path=[],
+        status=status,
+        explored_cells=len(g_score),
+        blocked_cells=blocked,
+        message=f"no path (explored={len(g_score)}, blocked={blocked}, "
+                f"margin={margin_cells}, wind_limit={wind_limit})",
+    )
+
+
+def A_star_helicopter(start, goal, terrain, wind_field, dem_lats, dem_lons,
+                      margin_m=150.0, size="heavy"):
+    """
+    [헬기 전용 A* 경로 탐색] 바운딩 박스 최적화 + 실제 풍황 비용.
+
+    레거시 API — list만 반환. 폴백 단계화가 필요한 경우 A_star_helicopter_safe
+    를 사용하세요.
+
+    Returns:
+        list of (row, col) (빈 리스트면 경로 없음)
+    """
+    return _a_star_helicopter_core(start, goal, terrain, wind_field,
+                                   dem_lats, dem_lons, margin_m, size).path
+
+
+def A_star_helicopter_safe(start, goal, terrain, wind_field, dem_lats, dem_lons,
+                            margin_m=150.0, size="heavy"):
+    """
+    [헬기 A* + Fail-safe 단계화] 실패 시 자동으로 완화 단계를 거치며 재탐색.
+
+    단계 정책:
+        L0 (기본):    margin=50,  WIND_BLOCK 그대로
+        L1 (확장):    margin=75,  WIND_BLOCK 그대로
+        L2 (강확장):  margin=100, WIND_BLOCK +3 m/s (비상회랑 진입)
+        L3 (회랑):    margin=100, WIND_BLOCK +5 m/s
+        L4 (직선폴백): 출발-목표 직선 보간 (마지막 수단, 관제 경고 필수)
+
+    각 단계는 PathSearchResult.escalation_level / .message 로 추적 가능.
+
+    Returns:
+        PathSearchResult
+    """
+    stages = [
+        (0, HELI_MARGIN_CELLS, None),
+        (1, int(HELI_MARGIN_CELLS * 1.5), None),
+        (2, HELI_MARGIN_CELLS * 2, WIND_BLOCK + 3.0),
+        (3, HELI_MARGIN_CELLS * 2, WIND_BLOCK + 5.0),
+    ]
+
+    last_result = None
+    for level, margin_cells, wb_override in stages:
+        result = _a_star_helicopter_core(
+            start, goal, terrain, wind_field, dem_lats, dem_lons,
+            margin_m=margin_m, size=size,
+            margin_cells=margin_cells, wind_block_override=wb_override,
+        )
+        if result.path:
+            result.escalation_level = level
+            if level > 0:
+                result.message = f"[L{level} 완화 성공] {result.message}"
+            return result
+        last_result = result
+
+    # L4: 직선 폴백
+    rows = max(abs(goal[0] - start[0]), abs(goal[1] - start[1])) + 1
+    straight = [(int(start[0] + (goal[0] - start[0]) * t / (rows - 1)),
+                 int(start[1] + (goal[1] - start[1]) * t / (rows - 1)))
+                for t in range(rows)] if rows > 1 else [start, goal]
+    return PathSearchResult(
+        path=smooth_path(straight),
+        status="fallback_straight",
+        escalation_level=4,
+        explored_cells=last_result.explored_cells if last_result is not None else 0,
+        blocked_cells=last_result.blocked_cells if last_result is not None else 0,
+        message="[L4 직선 폴백] 모든 단계 실패 — 관제 경고 필요",
+    )
 
 
 # ============================================================
@@ -298,7 +434,7 @@ def estimate_path_time(path, terrain, dem_lats, dem_lons):
 
 
 # 구조대원 보행 상수
-RESCUER_CELL_M = 10.0                       # 격자 셀 크기 (≈10m)
+RESCUER_CELL_M = DEM_CELL_M                 # 격자 셀 크기 (보행 거리 환산용; DEM과 동일)
 TOBLER_MAX_SPEED_MS = 6.0 * 1000.0 / 3600.0  # Tobler 최대속도(평지) ≈ 1.667 m/s
 W_FOREST_DENSITY = 1.5                      # 임관피도(밀도) 시간가중 계수
 W_FOREST_CANOPY = 0.5                       # 수고 시간가중 계수
@@ -363,28 +499,35 @@ def A_star_rescuer(start, goal, terrain, size="heavy"):
     """
     rows, cols = terrain["dem"].shape
 
+    # [입력 검증] start/goal 격자 범위 확인
+    for name, pos in (("start", start), ("goal", goal)):
+        if not (0 <= pos[0] < rows and 0 <= pos[1] < cols):
+            raise ValueError(f"A_star_rescuer: {name}={pos} out of grid {rows}x{cols}")
+
     # [바운딩 박스 최적화] 구조대원 마진 = 20 셀 (헬기의 1/3)
     RESCUER_MARGIN = 20
     bounds = get_bounding_box(start, goal, (rows, cols), RESCUER_MARGIN)
-    
+
+    # 휴리스틱 사전 계산용 상수
+    h_scale = RESCUER_CELL_M / TOBLER_MAX_SPEED_MS
+
     # A* 초기화
     open_set = []
-    heapq.heappush(open_set, (0, start))
+    heapq.heappush(open_set, (0.0, start))
     came_from = {}
-    g_score = {start: 0}
-    closed_set = set()
-    
+    g_score = {start: 0.0}
+
     # 8방향 이동
     directions = [(-1, 0), (1, 0), (0, -1), (0, 1),
                   (-1, -1), (-1, 1), (1, -1), (1, 1)]
-    
+
     while open_set:
-        _, current = heapq.heappop(open_set)
-        
-        if current in closed_set:
+        f_popped, current = heapq.heappop(open_set)
+
+        # stale 엔트리 스킵
+        if f_popped > g_score[current] + heuristic(current, goal) * h_scale:
             continue
-        closed_set.add(current)
-        
+
         # 목표 도달
         if current == goal:
             # 경로 역추적
@@ -402,10 +545,7 @@ def A_star_rescuer(start, goal, terrain, size="heavy"):
         # 이웃 노드 탐색
         for dr, dc in directions:
             neighbor = (current[0] + dr, current[1] + dc)
-            
-            if neighbor in closed_set:
-                continue
-            
+
             # 바운딩 박스 확인
             if not is_within_bounds(neighbor, bounds):
                 continue
@@ -428,7 +568,7 @@ def A_star_rescuer(start, goal, terrain, size="heavy"):
                 came_from[neighbor] = current
                 g_score[neighbor] = tentative_g
                 # 휴리스틱: 남은 격자거리 × 셀크기 ÷ 최대속도 = 최소 소요시간(초)
-                h = heuristic(neighbor, goal) * RESCUER_CELL_M / TOBLER_MAX_SPEED_MS
+                h = heuristic(neighbor, goal) * h_scale
                 f_score = tentative_g + h
                 heapq.heappush(open_set, (f_score, neighbor))
     
