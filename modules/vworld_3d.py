@@ -24,13 +24,19 @@ def latlon_to_grid(lat, lon, dem_lats, dem_lons):
     return int(r), int(c)
 
 def create_vworld_3d_mission_map(full_path, dem_lats, dem_lons, dem_array, path_penalties,
-                                  fire_station, landing_point, victim_gps, terrain):
+                                  fire_station, landing_point, victim_gps, terrain,
+                                  flight_path=None):
     """
     V-World 3D 지도 위에 구조 미션 정보를 표시
     Cesium.js 기반 HTML 생성
+
+    Args:
+        full_path: 착륙지점 → 조난자 도보 격자 경로 [(r, c), ...]
+        flight_path: 119 → 착륙지점 헬기 비행 경로 [{lat, lon, alt_m, ...}, ...]
+                     None 이면 (구버전 호환) 시작점/끝점만 직선으로 표시.
     """
-    
-    # 경로 좌표 변환
+
+    # 경로 좌표 변환 — 지면 보행 경로 (착륙지점 → 조난자)
     path_coords = []
     for r, c in full_path:
         lat = dem_lats[r, c]
@@ -41,6 +47,25 @@ def create_vworld_3d_mission_map(full_path, dem_lats, dem_lons, dem_array, path_
             "lon": float(lon),
             "height": float(height)
         })
+
+    # 비행 경로 좌표 (z 포함) — 시각화 시 별도 폴리라인으로 그림
+    if flight_path:
+        flight_coords = [
+            {"lat": p["lat"], "lon": p["lon"], "height": p["alt_m"]}
+            for p in flight_path
+        ]
+        flight_dist_m = flight_path[-1]["dist_m"]
+        cruise_alt_m = max(p["alt_m"] for p in flight_path)
+    else:
+        flight_dist_m = 0.0
+        cruise_alt_m = 0.0
+    if not flight_path:
+        flight_coords = [
+            {"lat": float(fire_station["latitude"]), "lon": float(fire_station["longitude"]),
+             "height": 1500.0},
+            {"lat": float(landing_point["latitude"]), "lon": float(landing_point["longitude"]),
+             "height": float(dem_array[int(landing_point["row"]), int(landing_point["col"])])},
+        ]
     
     # 착륙지점 고도
     landing_height = dem_array[int(landing_point["row"]), int(landing_point["col"])]
@@ -306,11 +331,19 @@ def create_vworld_3d_mission_map(full_path, dem_lats, dem_lons, dem_array, path_
             <div class="route-summary">
                 <div class="location-label">📊 경로 분석</div>
                 <div class="stat">
-                    <span>총 거리:</span>
+                    <span>비행 거리 (119→착륙):</span>
+                    <span class="stat-value">{flight_dist_m:.0f}m</span>
+                </div>
+                <div class="stat">
+                    <span>도보 거리 (착륙→조난자):</span>
                     <span class="stat-value">{sum([haversine(dem_lats[full_path[i][0], full_path[i][1]], dem_lons[full_path[i][0], full_path[i][1]], dem_lats[full_path[i+1][0], full_path[i+1][1]], dem_lons[full_path[i+1][0], full_path[i+1][1]]) for i in range(len(full_path)-1)]):.0f}m</span>
                 </div>
                 <div class="stat">
-                    <span>경로 포인트:</span>
+                    <span>순항고도:</span>
+                    <span class="stat-value">{cruise_alt_m:.0f}m</span>
+                </div>
+                <div class="stat">
+                    <span>도보 포인트:</span>
                     <span class="stat-value">{len(full_path)}</span>
                 </div>
                 <div class="stat">
@@ -376,34 +409,30 @@ def create_vworld_3d_mission_map(full_path, dem_lats, dem_lons, dem_array, path_
             }})
         }});
         
-        // 경로 표시
-        var pathCoordinates = {path_coords};
-        var pathFeatures = [];
-        
-        // 경로 라인
-        var pathPoints = pathCoordinates.map(p => 
-            ol.proj.fromLonLat([p.lon, p.lat])
-        );
-        
-        var pathLine = new ol.geom.LineString(pathPoints);
-        var pathFeature = new ol.Feature({{
-            geometry: pathLine
-        }});
-        
-        var vectorSource = new ol.source.Vector({{
-            features: [pathFeature]
-        }});
-        
-        var vectorLayer = new ol.layer.Vector({{
-            source: vectorSource,
-            style: new ol.style.Style({{
-                stroke: new ol.style.Stroke({{
-                    color: '#3b82f6',
-                    width: 3
-                }})
+        // 경로 표시 — (1) 도보 (착륙→조난자) (2) 비행 (119→착륙)
+        var walkCoordinates = {path_coords};
+        var flightCoordinates = {flight_coords};
+
+        var walkPoints = walkCoordinates.map(p => ol.proj.fromLonLat([p.lon, p.lat]));
+        var flightPoints = flightCoordinates.map(p => ol.proj.fromLonLat([p.lon, p.lat]));
+
+        var walkFeature = new ol.Feature({{ geometry: new ol.geom.LineString(walkPoints) }});
+        walkFeature.setStyle(new ol.style.Style({{
+            stroke: new ol.style.Stroke({{ color: '#3b82f6', width: 3 }})
+        }}));
+
+        var flightFeature = new ol.Feature({{ geometry: new ol.geom.LineString(flightPoints) }});
+        flightFeature.setStyle(new ol.style.Style({{
+            stroke: new ol.style.Stroke({{
+                color: '#ff6b35', width: 3, lineDash: [8, 6]
             }})
+        }}));
+
+        var vectorSource = new ol.source.Vector({{
+            features: [walkFeature, flightFeature]
         }});
-        
+
+        var vectorLayer = new ol.layer.Vector({{ source: vectorSource }});
         map.addLayer(vectorLayer);
         
         // 마커 추가

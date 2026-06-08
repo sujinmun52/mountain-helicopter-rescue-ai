@@ -1,5 +1,6 @@
 import numpy as np
 from modules.hoist import haversine
+from config import WIND_BLOCK, HELI_WIND_LIMIT
 
 def rmse(predicted, observed):
     return np.sqrt(np.mean((predicted - observed) ** 2))
@@ -13,16 +14,21 @@ def evaluate_weather_correction(kma_raw, kma_corrected, aws_observed):
     print(f"개선율: {(before - after) / before * 100:.1f}%")
     return before, after
 
-def evaluate_path(path, terrain, wind_field, dem_lats, dem_lons):
-    """경로 품질 평가"""
+def evaluate_path(path, terrain, wind_field, dem_lats, dem_lons, size="heavy"):
+    """경로 품질 평가
+
+    size : "light"|"heavy" — 위험풍속 판정에 기종별 운용 제한 적용
+           (소형 10 / 대형 20 m/s; 미지정 시 WIND_BLOCK 폴백)
+    """
     total = len(path)
     if total == 0:
         print("경로 없음")
         return
 
-    # 고위험 풍속 격자 통과 비율
+    # 고위험 풍속 격자 통과 비율 — 기종별 운용 풍속 제한 기준
+    wind_limit = HELI_WIND_LIMIT.get(size, WIND_BLOCK)
     danger_count = sum(
-        1 for r, c in path if wind_field["ws"][r, c] > 15.0
+        1 for r, c in path if wind_field["ws"][r, c] > wind_limit
     )
     danger_rate = danger_count / total
 
@@ -40,7 +46,7 @@ def evaluate_path(path, terrain, wind_field, dem_lats, dem_lons):
 
     print(f"총 경로 거리: {total_dist:.0f}m")
     print(f"평균 경사도: {avg_slope:.1f}°")
-    print(f"위험풍속 구간 비율: {danger_rate*100:.1f}%")
+    print(f"위험풍속 구간 비율(>{wind_limit:.0f}m/s): {danger_rate*100:.1f}%")
 
     return {
         "total_distance_m": total_dist,
