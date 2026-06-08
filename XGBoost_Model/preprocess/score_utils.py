@@ -3,32 +3,33 @@ import numpy as np
 SLOPE_MAP   = {0: 1.0, 1: 0.70, 2: 0.35}
 DENSITY_MAP = {0: 1.0, 1: 0.85, 2: 0.21, 3: 0.00}
 HEIGHT_MAP  = {0: 1.0, 1: 0.61, 2: 0.31}
+ELEVATION_MAP = {0: 1.0, 1: 0.70, 2: 0.35}
 MAX_ELEV    = 1708.0
 FIRE_STATION = {"latitude": 38.25, "longitude": 128.50}
 
 # 전술별 (정적 가중치, 동적 가중치) 분리 정의
 TACTIC_WEIGHTS = {
     "small_landing": {
-        "static":  {"slope": 0.42, "density": 0.10, "height": 0.08, "altitude": 0.08},
+        "static":  {"slope": 0.42, "density": 0.10, "height": 0.08, "elevation": 0.08},
         "dynamic": {"wind_score": 0.20, "wind_dir_score": 0.12},
     },
     "small_hoist": {
-        "static":  {"slope": 0.12, "density": 0.15, "height": 0.20, "altitude": 0.08},
+        "static":  {"slope": 0.12, "density": 0.15, "height": 0.20, "elevation": 0.08},
         "dynamic": {"wind_score": 0.30, "wind_dir_score": 0.15},
     },
     "large_landing": {
-        "static":  {"slope": 0.46, "density": 0.14, "height": 0.08, "altitude": 0.12},
+        "static":  {"slope": 0.46, "density": 0.14, "height": 0.08, "elevation": 0.12},
         "dynamic": {"wind_score": 0.12, "wind_dir_score": 0.08},
     },
     "large_hoist": {
-        "static":  {"slope": 0.10, "density": 0.24, "height": 0.18, "altitude": 0.18},
+        "static":  {"slope": 0.10, "density": 0.24, "height": 0.18, "elevation": 0.18},
         "dynamic": {"wind_score": 0.18, "wind_dir_score": 0.12},
     },
 }
 
 FEATURE_COLUMNS = [
     'elevation', 'slope_deg', 'tree_density', 'tree_height',
-    'wind_speed', 'wind_dir_sin', 'wind_dir_cos', 'wind_dir_score', 'altitude_score',
+    'wind_speed', 'wind_dir_sin', 'wind_dir_cos',
     'land_0', 'land_1', 'land_2',
 ]
 
@@ -40,11 +41,17 @@ TARGET_COLUMNS = [
 
 def compute_static_terrain_scores(df):
     """기상과 무관한 정적 지형 점수를 terrain_base 빌드 시 1회만 연산."""
+
+    elevation_grade = np.select(
+        [df['elevation'] < 500,
+         (df['elevation'] >= 500) & (df['elevation'] < 1200)],
+        [0, 1], default=2
+    ).astype('int8')
+
     df['slope_score']        = df['slope_deg'].map(SLOPE_MAP).astype('float32')
     df['tree_density_score'] = df['tree_density'].map(DENSITY_MAP).astype('float32')
     df['tree_height_score']  = df['tree_height'].map(HEIGHT_MAP).astype('float32')
-    # altitude_score도 고도(정적값)에만 의존 → 정적 성분에 포함
-    df['altitude_score']     = (1.0 - (df['elevation'] / MAX_ELEV) * 0.4).astype('float32')
+    df['elevation_score'] = np.vectorize(ELEVATION_MAP.get)(elevation_grade).astype('float32')
 
     for key, w in TACTIC_WEIGHTS.items():
         s = w["static"]
@@ -52,7 +59,7 @@ def compute_static_terrain_scores(df):
             df['slope_score']        * s["slope"]   +
             df['tree_density_score'] * s["density"] +
             df['tree_height_score']  * s["height"]  +
-            df['altitude_score']     * s["altitude"]
+            df['elevation_score']    * s["elevation"]
         ).astype('float32')
     return df
 

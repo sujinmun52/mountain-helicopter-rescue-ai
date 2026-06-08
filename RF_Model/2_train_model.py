@@ -2,30 +2,88 @@ import os
 import sys
 from dotenv import load_dotenv
 
-# 1. 인프라 및 경로 설정
+# 1. 인프라 및 상대 경로 설정 (XGBoost_Model 인프라와 완벽 동기화)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(current_dir, '.env'), override=True)
 project_root = os.path.dirname(current_dir)
-config_candidates = [os.path.join(current_dir, 'weather'), os.path.join(project_root, 'weather'), current_dir, project_root]
 
-for folder in config_candidates:
-    if os.path.exists(os.path.join(folder, 'config.py')):
-        sys.path.insert(0, folder)
-        break
-sys.path.insert(0, project_root)
-sys.path.insert(0, current_dir)
-
-import pandas as pd
+import polars as pl
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, roc_curve, auc, precision_recall_curve, average_precision_score
+from sklearn.preprocessing import label_binarize
 import joblib
+import matplotlib.pyplot as plt
+import platform
+
+# 🎯 맷플롯립 한글 깨짐 방지 글로벌 패치
+if platform.system() == 'Windows':
+    plt.rcParams['font.family'] = 'Malgun Gothic'
+elif platform.system() == 'Darwin':
+    plt.rcParams['font.family'] = 'AppleGothic'
+else:
+    plt.rcParams['font.family'] = 'NanumBarunGothic'
+plt.rcParams['axes.unicode_minus'] = False
+
+# 데이터 소스를 XGBoost_Model 패키지 내부의 배치 디렉토리로 조준 타격
+XGB_BATCH_DIR = os.path.join(project_root, 'XGBoost_Model', 'dataset', 'batches')
+MODEL_DIR     = os.path.join(current_dir, 'models')
+os.makedirs(MODEL_DIR, exist_ok=True)
 
 # ==============================================================================
-# [STEP 1] 대형 데이터 로드 전, 안전을 위한 인터랙티브 모델 선택 메뉴
+# [ENGINE] ROC & PR 통합 플로팅 시각화 대시보드 생성 함수
+# ==============================================================================
+def plot_evaluation_curves(y_true, y_prob, model_key):
+    n_classes = 3
+    y_true_bin = label_binarize(y_true, classes=[0, 1, 2])
+    class_labels = {0: "Class 0: Safe (안전)", 1: "Class 1: Caution (주의)", 2: "Class 2: Danger (위험)"}
+    colors = ['#1f77b4', '#ff7f0e', '#d62728']
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6.5))
+    
+    # Left Panel: ROC
+    for i in range(n_classes):
+        fpr, tpr, _ = roc_curve(y_true_bin[:, i], y_prob[:, i])
+        roc_auc = auc(fpr, tpr)
+        ax1.plot(fpr, tpr, color=colors[i], lw=2.5, label=f"{class_labels[i]} (AUC = {roc_auc:.4f})")
+    ax1.plot([0, 1], [0, 1], color='black', linestyle='--', alpha=0.5, label='Random Guess (AUC = 0.50)')
+    ax1.set_xlim([0.0, 1.0])
+    ax1.set_ylim([0.0, 1.05])
+    ax1.set_xlabel('False Positive Rate (FPR)', fontsize=11)
+    ax1.set_ylabel('True Positive Rate (TPR / Sensitivity)', fontsize=11)
+    ax1.set_title('Receiver Operating Characteristic (ROC) Curve', fontsize=12, fontweight='bold')
+    ax1.legend(loc="lower right", fontsize=9)
+    ax1.grid(True, linestyle=':', alpha=0.5)
+    
+    # Right Panel: PR
+    for i in range(n_classes):
+        precision, recall, _ = precision_recall_curve(y_true_bin[:, i], y_prob[:, i])
+        ap_score = average_precision_score(y_true_bin[:, i], y_prob[:, i])
+        ax2.plot(recall, precision, color=colors[i], lw=2.5, label=f"{class_labels[i]} (AP = {ap_score:.4f})")
+        baseline = np.sum(y_true_bin[:, i]) / len(y_true)
+        ax2.axhline(y=baseline, color=colors[i], linestyle='--', alpha=0.35)
+    ax2.set_xlim([0.0, 1.0])
+    ax2.set_ylim([0.0, 1.05])
+    ax2.set_xlabel('Recall (재현율)', fontsize=11)
+    ax2.set_ylabel('Precision (정밀도)', fontsize=11)
+    ax2.set_title('Precision-Recall (PR) Curve', fontsize=12, fontweight='bold')
+    ax2.legend(loc="lower left", fontsize=9)
+    ax2.grid(True, linestyle=':', alpha=0.5)
+    
+    plt.suptitle(f'[RF_{model_key.upper()}] Performance Evaluation Dashboard', fontsize=15, fontweight='bold', y=0.98)
+    plt.tight_layout()
+    
+    output_path = os.path.join(MODEL_DIR, f"curves_{model_key}.png")
+    plt.savefig(output_path, dpi=300)
+    print(f"\n[시각화 완료] 대시보드 저장 성공 ➔ {output_path}")
+    plt.close()
+
+
+# ==============================================================================
+# [STEP 1] 모델 인터랙티브 인터페이스 
 # ==============================================================================
 print("\n" + "="*60)
-print("[산악 구조 AI] 독립 기체 제원별 전술 모델 선택 훈련 가동")
+print("[산악 구조 AI - Random Forest 베이스라인] 통합 훈련 엔진")
 print("="*60)
 print(" 1. 소형 안착 착륙 모델 (Small Helicopter Landing)")
 print(" 2. 소형 강하 호이스트 모델 (Small Helicopter Hoist)")
@@ -34,81 +92,63 @@ print(" 4. 대형 강하 호이스트 모델 (Large Helicopter Hoist)")
 print("="*60)
 
 user_input = input("학습을 진행할 모델의 번호를 입력하세요 (1 ~ 4): ").strip()
-
-# 입력값 검증 및 매핑
 tactics_map = {
     "1": ("small_landing", "target_small_landing", "소형 착륙 모델"),
     "2": ("small_hoist",   "target_small_hoist",   "소형 호이스트 모델"),
     "3": ("large_landing", "target_large_landing", "대형 착륙 모델"),
     "4": ("large_hoist",   "target_large_hoist",   "대형 호이스트 모델")
 }
-
 if user_input not in tactics_map:
-    print("\n에러: 1번부터 4번 사이의 올바른 숫자만 입력해야 합니다. 프로그램을 종료합니다.")
-    sys.exit()
+    sys.exit("올바른 번호를 입력하세요.")
 
-# 선택된 제원 정보 추출
 model_key, target_column, model_kor_name = tactics_map[user_input]
+print(f"\n[데이터 파이프라인 미러링] XGBoost의 분기 Parquet 배치를 직접 스캔합니다.")
+print(f"대상 기체 전술: 【 {model_kor_name} 】\n")
 
-print(f"\n[선택 확정] 이번 회차에는 【 {model_kor_name} 】 딱 하나만 독립 집중 학습합니다.")
-print("만약 중간에 문제가 발생하더라도 이 모델 외의 다른 가중치 파일은 안전하게 보존됩니다.\n")
+# --- [STEP 2] 공유 피처 로드 (Polars LazyFrame 가속 스캔) ---
+feature_columns = [
+    'elevation', 'slope_deg', 'tree_density', 'tree_height',
+    'wind_speed', 'wind_dir_sin', 'wind_dir_cos',
+    'land_0', 'land_1', 'land_2'
+]
+load_cols = feature_columns + [target_column, 'is_train_final', 'is_test']
 
+lazy_all = pl.scan_parquet(os.path.join(XGB_BATCH_DIR, "*.parquet")).select(load_cols)
 
-# ==============================================================================
-# [STEP 2] 선택 완료 후 비로소 무거운 마스터 데이터셋 로드 시작
-# ==============================================================================
-print("--- 1. 대용량 복합 시공간 마스터 데이터셋 로드 (PyArrow 병렬 가속 연산) ---")
+print("공용 검증셋(Test Set) 수집 중...")
+test_pd = lazy_all.filter(pl.col('is_test')).collect(engine="streaming").to_pandas()
+X_test, y_test = test_pd[feature_columns].values.astype(np.float32), test_pd[target_column].values.astype(np.int32)
+print(f" ➔  검증셋 매트릭스 확보 완료: {len(test_pd):,}행")
+del test_pd
 
-# 과거 RF 공식에 개입하는 순수 8대 독립 변수 컬럼 정의
-feature_columns = ['elevation', 'slope_deg', 'land_0', 'land_1', 'land_2', 'wind_speed', 'wind_dir_sin', 'wind_dir_cos']
+print("공용 훈련셋(Train Set) 수집 및 다운캐스팅 중...")
+train_pd = lazy_all.filter(pl.col('is_train_final')).collect(engine="streaming").to_pandas()
 
-# 이번 학습에 필요한 열만 저격 지정하여 메모리 누수 원천 차단
-load_columns = feature_columns + [target_column, 'is_train_final', 'is_test']
+# 🎯 [버그 해결]: 꼬여있던 타이포 구문을 풀고 정상적인 분리형 넘파이 할당문으로 교정 완료
+X_train = train_pd[feature_columns].values.astype(np.float32)
+y_train = train_pd[target_column].values.astype(np.int32)
+print(f" ➔  훈련셋 매트릭스 확보 완료: {len(train_pd):,}행")
+del train_pd
 
-# 파일명 동기화: 앞서 전처리 단계에서 격리 저장한 _rf.csv 데이터를 PyArrow 엔진으로 로드
-df = pd.read_csv(
-    r'RF_Model\dataset\processed_seoraksan_master_rf.csv',
-    engine='pyarrow',
-    usecols=load_columns
-)
-
-train_df = df[df['is_train_final'] == True]
-test_df = df[df['is_test'] == True]
-
-X_train = train_df[feature_columns].astype(np.float32)
-X_test = test_df[feature_columns].astype(np.float32)
-
-# 출력 포맷팅 오류 수정
-print(f"훈련셋 데이터: {len(X_train):,}개 | 검증셋 데이터: {len(X_test):,}개")
-
-
-# ==============================================================================
-# [STEP 3] 선택된 타겟 단 하나만 브루트 포스 방어선 구축 후 훈련
-# ==============================================================================
-print(f"\n[{model_key.upper()} 단독 가동] 랜덤 포레스트 학습 시작...")
-
-# 하이브리드 아키텍처 최적화 패치:
-# 정예 멤버인 물리 P코어 개수인 6개로 스레드를 제한하여 성능을 극대화합니다.
+# --- [STEP 3] 코어 엔진 트레이닝 ---
+print(f"\n[RF 코어 피팅 개시] CPU 멀티 프로세싱 하이브리드 가동 중...")
 rf_model = RandomForestClassifier(
-    n_estimators=400, 
-    max_depth=10, 
-    min_samples_leaf=4,
-    class_weight='balanced', 
-    n_jobs=6,  # 고성능 P코어 개수인 6으로 튜닝
-    random_state=42,
-    max_samples=4000000  # 메모리 부족 차단용 하위 샘플링 버퍼
+    n_estimators=400, max_depth=10, min_samples_leaf=4,
+    class_weight='balanced', n_jobs=6, random_state=42, max_samples=4000000
 )
+rf_model.fit(X_train, y_train)
 
-# 선택된 타겟 컬럼 하나만 타겟팅하여 피팅(Fit)
-rf_model.fit(X_train, train_df[target_column])
+# --- [STEP 4] 검증 리포트 및 성능 곡선 플로팅 ---
+y_pred = rf_model.predict(X_test)
+y_prob = rf_model.predict_proba(X_test) 
 
-# 평가지표 출력
-print(f"\n[검증 결과 분석 - {model_key.upper()}]")
-print(classification_report(test_df[target_column], rf_model.predict(X_test), target_names=["안전(0)", "주의(1)", "위험(2)"]))
+print(f"\n[검증 결과 분석 - RF_{model_key.upper()}]")
+print(classification_report(y_test, y_pred, target_names=["안전(0)", "주의(1)", "위험(2)"]))
 
-# 전용 독립 파일 매핑 저장
-output_model_path = f'RF_Model\\rf_{model_key}_model.joblib'
+# 대시보드 시각화 파일 내보내기
+plot_evaluation_curves(y_test, y_prob, model_key)
+
+# 직렬화 저장
+output_model_path = os.path.join(MODEL_DIR, f'rf_{model_key}_model.joblib')
 joblib.dump(rf_model, output_model_path)
-
-print(f"\n[완료] 【 {model_kor_name} 】 단독 학습 및 직렬화 완료 -> {output_model_path}")
-print("==============================================================================")
+print(f"\n[완료] 하이브리드 아키텍처 모델 저장 완료 ➔ {output_model_path}")
