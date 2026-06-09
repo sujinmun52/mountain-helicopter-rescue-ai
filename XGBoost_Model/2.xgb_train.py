@@ -1,37 +1,63 @@
+"""
+[소거 실험 대조군] 오직 도메인 파생 피처 엔지니어링(Feature 추가)만 반영한 XGBoost 학습 스크립트
+"""
 import os
 import sys
+import gc  # 메모리 OOM 방어를 위한 가비지 컬렉션 모듈 선언 완비
 from dotenv import load_dotenv
 
+# -- 1. 인프라 및 경로 설정 ------------------------------------------------──
 _DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(_DIR, '.env'), override=True)
 sys.path.insert(0, _DIR)
 sys.path.insert(0, os.path.dirname(_DIR))
 
 import numpy as np
+import pandas as pd
 import polars as pl
 import xgboost as xgb
 import joblib
 import matplotlib.pyplot as plt
+import platform
 from sklearn.metrics import classification_report, roc_curve, auc, precision_recall_curve, average_precision_score
 from sklearn.preprocessing import label_binarize
-import platform
-
 
 from preprocess.score_utils import FEATURE_COLUMNS, TARGET_COLUMNS
+
+# 맷플롯립 한글 깨짐 방지 글로벌 패치
+if platform.system() == 'Windows':
+    plt.rcParams['font.family'] = 'Malgun Gothic'
+elif platform.system() == 'Darwin':
+    plt.rcParams['font.family'] = 'AppleGothic'
+else:
+    plt.rcParams['font.family'] = 'NanumBarunGothic'
+plt.rcParams['axes.unicode_minus'] = False
 
 BATCH_DIR   = os.path.join(_DIR, 'dataset', 'batches')
 MODEL_DIR   = os.path.join(_DIR, 'models')
 CHUNK_ROWS  = 500_000
 
 
+# ==============================================================================
+# [유지 항목] 순수 날것의 독립 변수 기반 비선형 파생 피처 엔지니어링 (치팅 전면 배제)
+# ==============================================================================
+def apply_advanced_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
+    """인간의 규칙 점수를 전면 배제하고, 순수 지형/기상 물리 변수들의 상호작용 피처만 생성합니다."""
+    # 1. 수목 복합 위험도 (tree_risk): 밀도와 높이의 비선형 결합
+    df['tree_risk'] = (df['tree_density'] * df['tree_height']).astype('float32')
+    
+    # 2. 대기 기류 리스크 (aero_risk): 고고도 강풍구역 산악파 발생 맥락 매핑
+    df['aero_risk'] = (df['elevation'] * df['wind_speed']).astype('float32')
+    
+    # 3. 경사 사면-풍속 복합 리스크 (slope_wind_risk): 사면 리스크와 돌풍 리스크의 시너지 매핑
+    df['slope_wind_risk'] = (df['slope_deg'] * df['wind_speed']).astype('float32')
+    
+    return df
+
+
 def calculate_manual_metrics(y_true, y_pred, num_classes=3):
-    """
-    내장 함수 없이 정답 배열과 예측 배열을 비교하여 
-    각 클래스별 TP, TN, FP, FN을 직접 계산하는 함수
-    """
     y_true = np.array(y_true, dtype=np.int32)
     y_pred = np.array(y_pred, dtype=np.int32)
-    
     class_labels = {0: "안전(0)", 1: "주의(1)", 2: "위험(2)"}
     evaluation_report = {}
     
@@ -65,59 +91,43 @@ def calculate_manual_metrics(y_true, y_pred, num_classes=3):
     return evaluation_report
 
 
-def plot_evaluation_curves(y_true, y_prob, model_name="XGBoost"):
-    """
-    [추가 모듈] 다중 클래스 OvR 방식의 ROC 및 PR 곡선을 생성하여 시각화 파일로 내보내는 함수
-    """
+def plot_evaluation_curves(y_true, y_prob, model_key):
     n_classes = 3
-    # OvR 곡선 묘사를 위한 타겟 이진화 원-핫 레이아웃 인코딩
     y_true_binarized = label_binarize(y_true, classes=[0, 1, 2])
-    
     class_labels = {0: "Class 0: Safe (안전)", 1: "Class 1: Caution (주의)", 2: "Class 2: Danger (위험)"}
     colors = ['#1f77b4', '#ff7f0e', '#d62728']
     
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6.5))
     
-    # 1. Left Panel: ROC Curve
     for i in range(n_classes):
         fpr, tpr, _ = roc_curve(y_true_binarized[:, i], y_prob[:, i])
-        roc_auc = auc(fpr, tpr)
-        ax1.plot(fpr, tpr, color=colors[i], lw=2.5, label=f"{class_labels[i]} (AUC = {roc_auc:.4f})")
-        
+        ax1.plot(fpr, tpr, color=colors[i], lw=2.5, label=f"{class_labels[i]} (AUC = {auc(fpr, tpr):.4f})")
     ax1.plot([0, 1], [0, 1], color='black', linestyle='--', alpha=0.5, label='Random Guess (AUC = 0.50)')
     ax1.set_xlim([0.0, 1.0])
     ax1.set_ylim([0.0, 1.05])
-    ax1.set_xlabel('False Positive Rate (FPR)', fontsize=11, labelpad=6)
-    ax1.set_ylabel('True Positive Rate (TPR / Sensitivity)', fontsize=11, labelpad=6)
-    ax1.set_title('Receiver Operating Characteristic (ROC) Curve', fontsize=12, fontweight='bold', pad=10)
-    ax1.legend(loc="lower right", fontsize=9)
+    ax1.set_xlabel('False Positive Rate (FPR)', fontsize=11)
+    ax1.set_ylabel('True Positive Rate (TPR / Sensitivity)', fontsize=11)
+    ax1.set_title('Receiver Operating Characteristic (ROC) Curve', fontsize=12, fontweight='bold')
+    ax1.legend(loc="lower right")
     ax1.grid(True, linestyle=':', alpha=0.5)
     
-    # 2. Right Panel: Precision-Recall Curve
     for i in range(n_classes):
         precision, recall, _ = precision_recall_curve(y_true_binarized[:, i], y_prob[:, i])
-        ap_score = average_precision_score(y_true_binarized[:, i], y_prob[:, i])
-        ax2.plot(recall, precision, color=colors[i], lw=2.5, label=f"{class_labels[i]} (AP = {ap_score:.4f})")
-        
-        # 불균형 클래스 분포 지분율 기반의 개별 베이스라인 플로팅
+        ax2.plot(recall, precision, color=colors[i], lw=2.5, label=f"{class_labels[i]} (AP = {average_precision_score(y_true_binarized[:, i], y_prob[:, i]):.4f})")
         baseline = np.sum(y_true_binarized[:, i]) / len(y_true)
         ax2.axhline(y=baseline, color=colors[i], linestyle='--', alpha=0.35)
-        
     ax2.set_xlim([0.0, 1.0])
     ax2.set_ylim([0.0, 1.05])
-    ax2.set_xlabel('Recall (재현율)', fontsize=11, labelpad=6)
-    ax2.set_ylabel('Precision (정밀도)', fontsize=11, labelpad=6)
-    ax2.set_title('Precision-Recall (PR) Curve', fontsize=12, fontweight='bold', pad=10)
-    ax2.legend(loc="lower left", fontsize=9)
+    ax2.set_xlabel('Recall (재현율)', fontsize=11)
+    ax2.set_ylabel('Precision (정밀도)', fontsize=11)
+    ax2.set_title('Precision-Recall (PR) Curve', fontsize=12, fontweight='bold')
+    ax2.legend(loc="lower left")
     ax2.grid(True, linestyle=':', alpha=0.5)
     
-    plt.suptitle(f'[{model_name.upper()}] Performance Evaluation Dashboard', fontsize=15, fontweight='bold', y=0.98)
+    plt.suptitle(f'[XGB_{model_key.upper()}_Feature] Performance Dashboard', fontsize=15, fontweight='bold', y=0.98)
     plt.tight_layout()
-    
-    output_path = os.path.join(MODEL_DIR, f"curves_{model_name.lower()}.png")
-    plt.savefig(output_path, dpi=300)
-    print(f"\n[시각화 내보내기 성공] ROC/PR 통합 대시보드가 저장되었습니다 -> {output_path}")
-    plt.show()
+    plt.savefig(os.path.join(MODEL_DIR, f"curves_xgb_{model_key.lower()}_feature.png"), dpi=300)
+    plt.close()
 
 
 # ── [STEP 1] 모델 선택 ────────────────────────────────────────────────────
@@ -132,55 +142,65 @@ for k, (_, name) in TACTICS.items():
     print(f" {k}. {name}")
 
 sel = input("번호 입력 (1~4): ").strip()
-if sel not in TACTICS:
-    sys.exit("올바른 번호를 입력하세요.")
+if sel not in TACTICS: sys.exit("올바른 번호를 입력하세요.")
 model_key, model_name = TACTICS[sel]
 target_col = f'target_{model_key}'
 
 dev = input("장치 (1=GPU / 2=CPU): ").strip()
-device = {"1": "cuda", "2": "cpu"}.get(dev)
-if not device:
-    sys.exit("1 또는 2를 입력하세요.")
+device = "cuda" if dev == "1" else "cpu"
 
-print(f"\n{model_name} {device.upper()} 학습 시작\n")
+print(f"\n[실험군 학습] {model_name} XGBoost {device.upper()} 피처 확장 전용 파이프라인 가동\n")
 
-# ── [STEP 2] Polars LazyFrame 지연 스캔 ──────────────────────────────────
+# ── [STEP 2] Polars 지연 스캔 및 확장 13대 피처 추출 ──────────────────────
 load_cols = FEATURE_COLUMNS + [target_col, 'is_train_final', 'is_test']
 
-lazy_all = (
-    pl.scan_parquet(os.path.join(BATCH_DIR, "*.parquet"))
-      .select(load_cols)
-)
+lazy_all = pl.scan_parquet(os.path.join(BATCH_DIR, "*.parquet")).select(load_cols)
 lazy_train = lazy_all.filter(pl.col('is_train_final')).drop(['is_train_final', 'is_test'])
 lazy_test  = lazy_all.filter(pl.col('is_test')).drop(['is_train_final', 'is_test'])
 
-print("검증셋 수집 중 (Polars streaming)...")
+print("검증셋 수집 및 파생 피처 엔지니어링 처리 중...")
 test_pd = lazy_test.collect(engine="streaming").to_pandas()
-X_test  = test_pd[FEATURE_COLUMNS].values.astype('float32')
+test_pd = apply_advanced_feature_engineering(test_pd)
+
+# 🎯 확장된 13대 피처 매트릭스 리스트 동기화 활용
+EXTENDED_FEATURES = FEATURE_COLUMNS + ['tree_risk', 'aero_risk', 'slope_wind_risk']
+
+X_test  = test_pd[EXTENDED_FEATURES].values.astype('float32')
 y_test  = test_pd[target_col].values.astype('int32')
 dtest   = xgb.DMatrix(X_test, label=y_test)
-print(f"   검증셋: {len(test_pd):,}행")
+print(f"   검증셋 매트릭스 차원: {X_test.shape[0]:,}행 × {X_test.shape[1]}열")
 del test_pd
 
-# ── [STEP 3] DataIter: 훈련셋 청크 스트리밍 주입 ─────────────────────────
-class ParquetChunkIter(xgb.DataIter):
-    def __init__(self, lazy: pl.LazyFrame, feat_cols, tgt_col, chunk):
-        self._df   = lazy.collect(engine="streaming").to_pandas()
-        self._feat = feat_cols
-        self._tgt  = tgt_col
-        self._step = chunk
-        self._n    = len(self._df)
-        self._cur  = 0
+print("훈련셋 수집 및 다운캐스팅 가동...")
+train_pd = lazy_train.collect(engine="streaming").to_pandas()
+train_pd = apply_advanced_feature_engineering(train_pd)
+X_train = train_pd[EXTENDED_FEATURES].values.astype('float32')
+y_train = train_pd[target_col].values.astype('int32')
+print(f"   훈련셋 매트릭스 차원: {X_train.shape[0]:,}행 × {X_train.shape[1]}열")
+
+del train_pd
+gc.collect() 
+
+
+# ── [STEP 3] DataIter: 순정 상태(가중치 배제) 청크 반복자 가동 ───────────────
+class BaselineParquetChunkIter(xgb.DataIter):
+    def __init__(self, X, y, chunk_size):
+        self._X = X
+        self._y = y
+        self._step = chunk_size
+        self._n = len(X)
+        self._cur = 0
         super().__init__()
 
     def next(self, input_data):
         if self._cur >= self._n:
             return 0
-        end   = min(self._cur + self._step, self._n)
-        chunk = self._df.iloc[self._cur:end]
+        end = min(self._cur + self._step, self._n)
+        
+        # 🎯 [소거 조치 2]: 비용 가중치(weight) 레이어를 완전히 걷어내고 순수 데이터셋만 전송
         input_data(
-            data  = chunk[self._feat].values.astype('float32'),
-            label = chunk[self._tgt].values.astype('int32'),
+            data=self._X[self._cur:end],
+            label=self._y[self._cur:end]
         )
         self._cur = end
         return 1
@@ -188,55 +208,59 @@ class ParquetChunkIter(xgb.DataIter):
     def reset(self):
         self._cur = 0
 
-print("DataIter 초기화 중...")
-it     = ParquetChunkIter(lazy_train, FEATURE_COLUMNS, target_col, CHUNK_ROWS)
+print("QuantileDMatrix 인프라 구조체 생성 중 (피처 확장 스트리밍 주입)...")
+it = BaselineParquetChunkIter(X_train, y_train, CHUNK_ROWS)
 dtrain = xgb.QuantileDMatrix(it)
 
-# ── [STEP 4] 학습 ─────────────────────────────────────────────────────────
-params = {
-    "device": device, "tree_method": "hist",
-    "objective": "multi:softprob",  # 🎯 [수정]: ROC/PR 연산을 위해 softmax를 softprob로 교체
-    "num_class": 3,
+
+# ==============================================================================
+# [소거 조치 3] Optuna 베이지안 최적화 하이퍼파라미터 오토 튜닝 엔진 전면 삭제
+# ==============================================================================
+
+
+# ── [STEP 4] 베이스라인 고정 하이퍼파라미터 기반 피팅 가동 ────────────────────
+print(f"\n--- 베이스라인 기본 하이퍼파라미터 고정 기준 훈련 개시 ---")
+baseline_params = {
+    "device": device, 
+    "tree_method": "hist",
+    "objective": "multi:softprob", 
+    "num_class": 3, 
     "eval_metric": "mlogloss",
-    "max_depth": 6, "learning_rate": 0.1,
-    "subsample": 0.8, "colsample_bytree": 0.8,
-    "min_child_weight": 4, "gamma": 0.1, "lambda": 1.0,
-    "seed": 42, "nthread": 6,
+    "max_depth": 6, 
+    "learning_rate": 0.1,
+    "subsample": 0.8, 
+    "colsample_bytree": 0.8,
+    "min_child_weight": 4, 
+    "gamma": 0.1, 
+    "lambda": 1.0,
+    "seed": 42, 
+    "nthread": 6,
 }
+
 model = xgb.train(
-    params, dtrain,
+    baseline_params, dtrain,
     num_boost_round=200,
     evals=[(dtrain, "train"), (dtest, "eval")],
-    callbacks=[xgb.callback.EarlyStopping(30, metric_name="mlogloss",
-                                           data_name="eval", save_best=True)],
-    verbose_eval=10,
+    callbacks=[xgb.callback.EarlyStopping(30, metric_name="mlogloss", data_name="eval", save_best=True)],
+    verbose_eval=20,
 )
 
-# ── [STEP 5] 검증 및 저장 ────────────────────────────────────────────────
-# 🎯 [수정]: 확률 행렬(N, 3)을 먼저 수집한 뒤 argmax로 하드 레이블 복원하도록 파이프라인 전면 개편
-if platform.system() == 'Windows':
-    plt.rcParams['font.family'] = 'Malgun Gothic'   # 윈도우 (맑은 고딕)
-elif platform.system() == 'Darwin':
-    plt.rcParams['font.family'] = 'AppleGothic'     # 맥 (애플 고딕)
-else:
-    plt.rcParams['font.family'] = 'NanumBarunGothic' # 리눅스/우분투 (나눔바른고딕)
 
-# 그래프 내부 마이너스(-) 기호 깨짐 방지
-plt.rcParams['axes.unicode_minus'] = False
-
+# ── [STEP 5] 다차원 검증 및 성능 곡선 플로팅 ────────────────────────────────
 y_prob = model.predict(dtest)
 y_pred = np.argmax(y_prob, axis=1).astype('int32')
 
-# 1. 사이킷런 표준 지표 출력
+print(f"\n[소거실험 검증 분석 - XGB_{model_key.upper()}_Feature_Only]")
 print(classification_report(y_test, y_pred, target_names=["안전(0)", "주의(1)", "위험(2)"]))
 
-# 2. 바닥부터 직접 정산하는 수제 행렬 검증 연산 가동
+# 1. 바닥부터 계산하는 수제 혼동행렬 지표 리포팅
 manual_metrics = calculate_manual_metrics(y_test, y_pred, num_classes=3)
 
-# 3. 🎯 [추가 주입]: 확률 매트릭스를 기반으로 다중 클래스 ROC 및 PR 곡선 그래프 플로팅 가동
-plot_evaluation_curves(y_test, y_prob, model_name=model_key)
+# 2. 고해상도 대시보드 플롯 파일 생성 자동 가동
+plot_evaluation_curves(y_test, y_prob, model_key)
 
-os.makedirs(MODEL_DIR, exist_ok=True)
-model.save_model(os.path.join(MODEL_DIR, f'xgb_{model_key}_model.ubj'))
-joblib.dump(model, os.path.join(MODEL_DIR, f'xgb_{model_key}_model.joblib'))
-print(f"\n{model_name} 저장 완료 → XGBoost_Model/models/")
+# 실험군 전용 고유 파일명 명세 저장결착
+model.save_model(os.path.join(MODEL_DIR, f'xgb_{model_key}_feature_model.ubj'))
+joblib.dump(model, os.path.join(MODEL_DIR, f'xgb_{model_key}_feature_model.joblib'))
+print(f"\n[대조군 훈련 완료] 피처 확장 단독 처리 모델 및 대시보드 저장 성공.")
+print("="*60)

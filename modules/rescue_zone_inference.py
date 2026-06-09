@@ -37,6 +37,9 @@ from score_utils import (                       # noqa: E402
     compute_wind_score, compute_wind_dir_score,
 )
 
+# 학습(2.xgb_train)에서 추가한 물리변수 상호작용 피처 — 모델 입력은 13개.
+EXTENDED_FEATURES = FEATURE_COLUMNS + ["tree_risk", "aero_risk", "slope_wind_risk"]
+
 # KMA API 키 로드 (.env → config → 환경변수 순 폴백)
 load_dotenv(os.path.join(_REPO_ROOT, ".env"), override=False)
 try:
@@ -73,7 +76,7 @@ def _load_models(heli_size: str):
     if heli_size not in _MODEL_CACHE:
         models = {}
         for tactic in ("landing", "hoist"):
-            path = os.path.join(_MODELS_DIR, f"xgb_{heli_size}_{tactic}_model.ubj")
+            path = os.path.join(_MODELS_DIR, f"xgb_{heli_size}_{tactic}_feature_model.ubj")
             booster = xgb.Booster()
             booster.load_model(path)
             booster.set_param({"device": "cpu"})   # GPU 의존 제거(파이프라인 안정성)
@@ -222,6 +225,12 @@ def infer_best_zone(gps_coord: dict, heli_size: str = "small",
     cand["wind_dir_score"] = compute_wind_dir_score(
         cand["latitude"].values, cand["longitude"].values, cand["wind_direction"].values)
 
+    # 피처 엔지니어링 (학습(2.xgb_train)과 동일 — 물리변수 비선형 상호작용)
+    #   aero_risk·slope_wind_risk에 wind_speed가 들어가 모델의 '풍속 반응'을 살림.
+    cand["tree_risk"]       = (cand["tree_density"] * cand["tree_height"]).astype("float32")
+    cand["aero_risk"]       = (cand["elevation"] * cand["wind_speed"]).astype("float32")
+    cand["slope_wind_risk"] = (cand["slope_deg"] * cand["wind_speed"]).astype("float32")
+
     # ── 3) XGBoost 추론 (landing/hoist) + Risk Score 산출 ───────────────────
     models = _load_models(heli_size)
 
@@ -240,7 +249,7 @@ def infer_best_zone(gps_coord: dict, heli_size: str = "small",
         if valid.empty:
             continue  # 이 전술은 유효(점수 있는) 착륙 후보 없음 → 스킵
 
-        dmat = xgb.DMatrix(valid[FEATURE_COLUMNS].astype("float32"))
+        dmat = xgb.DMatrix(valid[EXTENDED_FEATURES].astype("float32"))
         pred = models[tactic].predict(dmat)
         risk_class = pred.argmax(axis=1) if pred.ndim == 2 else pred.astype(int)
 
