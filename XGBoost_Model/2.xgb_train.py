@@ -154,7 +154,7 @@ print(f"\n[실험군 학습] {model_name} XGBoost {device.upper()} 피처 확장
 # ── [STEP 2] Polars 지연 스캔 및 확장 13대 피처 추출 ──────────────────────
 load_cols = FEATURE_COLUMNS + [target_col, 'is_train_final', 'is_test']
 
-lazy_all = pl.scan_parquet(os.path.join(BATCH_DIR, "*.parquet")).select(load_cols)
+lazy_all = pl.scan_parquet(os.path.join(BATCH_DIR, "augmented_train_data.parquet")).select(load_cols)
 lazy_train = lazy_all.filter(pl.col('is_train_final')).drop(['is_train_final', 'is_test'])
 lazy_test  = lazy_all.filter(pl.col('is_test')).drop(['is_train_final', 'is_test'])
 
