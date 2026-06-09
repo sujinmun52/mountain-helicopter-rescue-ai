@@ -175,18 +175,22 @@ def _fuse_realtime_wind(cand: pd.DataFrame) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════════════════════
 # 메인 추론 진입점
 # ══════════════════════════════════════════════════════════════════════════
-def infer_best_zone(gps_coord: dict, heli_size: str = "small",
-                    radius_m: float = 500.0) -> dict | None:
-    """
-    조난자 GPS 반경 내에서 XGBoost 4모드 추론으로 최적 구조 지점을 선정.
+def _series_to_zone(s) -> dict:
+    """best(pandas Series) → 표준 zone dict (IN/OUT 계약 고정)."""
+    return {
+        "latitude":   float(s["latitude"]),
+        "longitude":  float(s["longitude"]),
+        "mode":       str(s["mode"]),
+        "score":      float(s["risk_score"]),
+        "risk_class": int(s["risk_class"]),
+        "wind_speed": float(s["wind_speed"]),
+        "distance_m": float(s["dist_to_rescue_m"]),
+    }
 
-    Returns (성공 시) dict:
-        {latitude, longitude, mode, score, risk_class, wind_speed, distance_m}
-      • mode       : 선정된 전술 (예: "small_landing")
-      • score      : 실제 Risk Score(static + 동적 기상 반영)
-      • risk_class : 모델 안전등급 (0=안전, 1=주의, 2=위험)
-    실패/후보 없음 시 None (호출측이 MOCK 폴백).
-    """
+
+def _compute_best_per_tactic(gps_coord: dict, heli_size: str = "small",
+                             radius_m: float = 500.0):
+    """반경 내 후보로 landing/hoist 각 best(Series)를 산출. 후보 없으면 {} 반환."""
     if heli_size not in ("small", "large"):
         raise ValueError("heli_size must be 'small' or 'large'")
 
@@ -200,7 +204,7 @@ def infer_best_zone(gps_coord: dict, heli_size: str = "small",
         (master["longitude"].between(v_lon - deg, v_lon + deg))
     ].copy()
     if box.empty:
-        return None
+        return {}
 
     # 위경도 근사 평면거리(m): 위도 1°≈111km, 경도는 cos(위도) 보정
     dlat = (box["latitude"] - v_lat) * 111_000.0
@@ -212,7 +216,7 @@ def infer_best_zone(gps_coord: dict, heli_size: str = "small",
     if "land_2" in cand.columns:
         cand = cand[cand["land_2"] != 1].copy()
     if cand.empty:
-        return None
+        return {}
 
     # ── 2) 실시간 기상 융합 + 모델 입력 피처 구성 ───────────────────────────
     cand = _fuse_realtime_wind(cand)
@@ -221,7 +225,18 @@ def infer_best_zone(gps_coord: dict, heli_size: str = "small",
     cand["wind_dir_cos"] = np.cos(wd_rad).astype("float32")
 
     # 동적 점수(풍속/풍향) → 실제 Risk Score 합산용
-    cand["wind_score"] = compute_wind_score(cand["wind_speed"].values)
+    #   wind_score는 3.xgb_inference와 정합되도록 '기종별' 임계 적용
+    #   (항공안전법 별표24 기반: 소형 10 / 대형 20 m/s 한계. 학습 타겟용
+    #    score_utils.compute_wind_score(기종무관)와 달리 추론 점수에만 기종별 적용)
+    _ws = cand["wind_speed"].values
+    if heli_size == "small":
+        cand["wind_score"] = np.select(
+            [_ws < 5.0, (_ws >= 5.0) & (_ws < 8.0), (_ws >= 8.0) & (_ws < 10.0)],
+            [1.0, 0.6, 0.2], default=0.0).astype("float32")
+    else:  # large
+        cand["wind_score"] = np.select(
+            [_ws < 5.0, (_ws >= 5.0) & (_ws < 12.0), (_ws >= 12.0) & (_ws < 20.0)],
+            [1.0, 0.6, 0.2], default=0.0).astype("float32")
     cand["wind_dir_score"] = compute_wind_dir_score(
         cand["latitude"].values, cand["longitude"].values, cand["wind_direction"].values)
 
@@ -272,21 +287,39 @@ def infer_best_zone(gps_coord: dict, heli_size: str = "small",
                               ascending=[True, False, True])
         best_per_tactic[tactic] = sub.iloc[0]
 
-    # 두 전술 모두 유효 후보가 없으면 폴백(호출측이 휴리스틱 처리)
-    if not best_per_tactic:
-        print("  • [Stage 2/ML] 반경 내 유효 static_score 후보 없음 → 폴백")
+    return best_per_tactic
+
+
+def infer_best_zone(gps_coord: dict, heli_size: str = "small",
+                    radius_m: float = 500.0) -> dict | None:
+    """단일 best 구조 지점 (자동 파이프라인용).
+
+    '착륙 우선' 규칙: landing이 가능(위험 등급2 아님)하면 착륙, 불가 시 호이스트.
+    (실제 산악구조: 착륙 가능하면 빠른 착륙, 착륙 불가 험지에서만 호이스트)
+
+    Returns: {latitude, longitude, mode, score, risk_class, wind_speed, distance_m} 또는 None.
+    """
+    bpt = _compute_best_per_tactic(gps_coord, heli_size, radius_m)
+    if not bpt:
         return None
+    land = bpt.get("landing")
+    hoist = bpt.get("hoist")
+    if land is not None and int(land["risk_class"]) < 2:
+        best = land            # 착륙 가능 → 착륙 우선
+    elif hoist is not None:
+        best = hoist           # 착륙 불가 → 호이스트
+    else:
+        best = land
+    return _series_to_zone(best)
 
-    # ── 4) landing/hoist 중 더 안전한(낮은 등급·높은 점수) 전술 선택 ─────────
-    best = min(best_per_tactic.values(),
-               key=lambda r: (int(r["risk_class"]), -float(r["risk_score"])))
 
-    return {
-        "latitude":   float(best["latitude"]),
-        "longitude":  float(best["longitude"]),
-        "mode":       str(best["mode"]),
-        "score":      float(best["risk_score"]),
-        "risk_class": int(best["risk_class"]),
-        "wind_speed": float(best["wind_speed"]),
-        "distance_m": float(best["dist_to_rescue_m"]),
-    }
+def infer_tactics(gps_coord: dict, heli_size: str = "small",
+                  radius_m: float = 500.0):
+    """착륙(A안)·호이스트(B안) 둘 다의 best를 반환 — 3.xgb_inference 방식(기장 판단용).
+
+    Returns: {"landing": zone|None, "hoist": zone|None} 또는 None(후보 전무).
+    """
+    bpt = _compute_best_per_tactic(gps_coord, heli_size, radius_m)
+    if not bpt:
+        return None
+    return {t: _series_to_zone(s) for t, s in bpt.items()}

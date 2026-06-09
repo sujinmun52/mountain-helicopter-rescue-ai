@@ -30,43 +30,56 @@ def create_helicopter_mission_folium_map(full_path, dem_lats, dem_lons, dem_arra
         tiles='OpenStreetMap'
     )
 
-    # 119 → 착륙지점 비행 경로 (주황 점선)
+    # 119 → 착륙지점 비행 경로 (세그먼트별: 풍속 위험에 따라 색·우회이유 tooltip)
     if flight_path:
-        folium.PolyLine(
-            locations=[[p["lat"], p["lon"]] for p in flight_path],
-            color='#ff6b35', weight=3, opacity=0.85, dash_array='8, 6',
-            tooltip='비행 경로 (119→착륙)'
-        ).add_to(m)
+        for i in range(len(flight_path) - 1):
+            p = flight_path[i]
+            ws = p.get("wind_speed", 0)
+            rs = []
+            if ws > 8:               rs.append(f"강풍 {ws:.0f}m/s")
+            if p.get("is_ridge"):    rs.append("능선 난류")
+            reason = " · ".join(rs) if rs else "양호(순항)"
+            fcolor = "#ef4444" if ws > 12 else ("#f59e0b" if ws > 8 else "#ff6b35")
+            tip = (f"<b>비행 · {reason}</b><br>풍속 {ws:.1f}m/s · "
+                   f"풍향 {p.get('wind_dir', 0):.0f}° · 고도 {p['alt_m']:.0f}m")
+            folium.PolyLine(
+                locations=[[flight_path[i]["lat"], flight_path[i]["lon"]],
+                           [flight_path[i + 1]["lat"], flight_path[i + 1]["lon"]]],
+                color=fcolor, weight=3, opacity=0.85, dash_array='8, 6',
+                tooltip=tip, popup=tip,
+            ).add_to(m)
 
     # ===== 경로 구성요소 =====
     path_coords = [[dem_lats[r, c], dem_lons[r, c]] for r, c in full_path]
     
-    # 패널티에 따른 경로 세그먼트 색상화
-    max_penalty = max([p["penalty"] for p in path_penalties]) if path_penalties else 1
-    
+    # 패널티 구간(절대값)별 경로 세그먼트 색상 + '우회 이유' tooltip(hover)
+    def _risk_reason(p):
+        rs = []
+        if p["slope"] > 30:               rs.append(f"급경사 {p['slope']:.0f}°")
+        if p["wind_speed"] > 8:           rs.append(f"강풍 {p['wind_speed']:.0f}m/s")
+        if p.get("is_forest"):            rs.append("밀림")
+        if p.get("is_ridge"):             rs.append("능선 난류")
+        return " · ".join(rs) if rs else "양호(저위험)"
+
     for i in range(len(path_coords) - 1):
         if i < len(path_penalties):
-            penalty = path_penalties[i]["penalty"]
-            penalty_ratio = penalty / max_penalty if max_penalty > 0 else 0
-            
-            # 패널티에 따른 색상 선택
-            if penalty_ratio < 0.3:
-                color = '#22c55e'  # 녹색
-                weight = 2
-            elif penalty_ratio < 0.6:
-                color = '#eab308'  # 노란색
-                weight = 3
+            p = path_penalties[i]
+            pen = p["penalty"]
+            if pen < 0.5:
+                color, weight = "#22c55e", 3   # 안전
+            elif pen < 0.8:
+                color, weight = "#eab308", 4   # 주의
             else:
-                color = '#ef4444'  # 빨간색
-                weight = 4
-            
-            # 경로 세그먼트
+                color, weight = "#ef4444", 5   # 위험
+
+            tip = (f"<b>⚠ {_risk_reason(p)}</b><br>"
+                   f"패널티 {pen:.2f}<br>"
+                   f"경사 {p['slope']:.0f}° · 풍속 {p['wind_speed']:.1f}m/s · "
+                   f"풍향 {p.get('wind_dir', 0):.0f}°")
             folium.PolyLine(
-                locations=[path_coords[i], path_coords[i+1]],
-                color=color,
-                weight=weight,
-                opacity=0.8,
-                popup=f"지점 {i+1}<br>경사도: {path_penalties[i]['slope']:.1f}°<br>풍속: {path_penalties[i]['wind_speed']:.1f}m/s"
+                locations=[path_coords[i], path_coords[i + 1]],
+                color=color, weight=weight, opacity=0.85,
+                tooltip=tip, popup=tip,
             ).add_to(m)
     
     # ===== 마커 추가 =====
@@ -85,12 +98,13 @@ def create_helicopter_mission_folium_map(full_path, dem_lats, dem_lons, dem_arra
         tooltip="119 센터"
     ).add_to(m)
     
-    # 호이스트 착륙지점
+    # 구조 지점 — 전술(mode)에 따라 라벨 구분 (landing=착륙 / hoist=호이스트)
     landing_height = dem_array[int(landing_point["row"]), int(landing_point["col"])]
+    _spot = "호이스트 지점" if "hoist" in str(landing_point.get("mode", "")) else "착륙 지점"
     folium.Marker(
         location=[landing_point["latitude"], landing_point["longitude"]],
         popup=f"""
-        <b>🚁 호이스트 착륙지점</b><br>
+        <b>🚁 {_spot}</b><br>
         위도: {landing_point['latitude']:.4f}°<br>
         경도: {landing_point['longitude']:.4f}°<br>
         고도: {landing_height:.0f}m<br>
@@ -203,7 +217,44 @@ def create_helicopter_mission_folium_map(full_path, dem_lats, dem_lons, dem_arra
     """
     
     m.get_root().html.add_child(folium.Element(legend_html))
-    
+
+    # 🛰️ 실시간 기상청 AWS 연동 배지 (상단) — 실시간 API 기반임을 명시
+    _avg_ws = (sum(p["wind_speed"] for p in path_penalties) / len(path_penalties)
+               if path_penalties else 0.0)
+    kma_badge = f"""
+    <div style="position:fixed; top:12px; left:50%; transform:translateX(-50%);
+         z-index:9999; background:rgba(16,41,26,0.92); color:#9be7a0;
+         padding:8px 18px; border-radius:20px; font-size:13px; font-weight:bold;
+         box-shadow:0 2px 8px rgba(0,0,0,0.35); white-space:nowrap;">
+      🛰️ 실시간 기상청(KMA) AWS 관측 연동 · 경로 평균 풍속 {_avg_ws:.1f} m/s
+    </div>"""
+    m.get_root().html.add_child(folium.Element(kma_badge))
+
+    # 정보 패널(범례·배지·통계)을 마우스로 드래그해 옮길 수 있게 (경로 가림 방지)
+    drag_js = """
+    <script>
+    window.addEventListener('load', function () {
+      setTimeout(function () {
+        document.querySelectorAll('body > div[style*="fixed"]').forEach(function (el) {
+          el.style.cursor = 'move';
+          var drag = false, sx, sy, sl, st;
+          el.addEventListener('mousedown', function (e) {
+            drag = true; sx = e.clientX; sy = e.clientY;
+            var r = el.getBoundingClientRect(); sl = r.left; st = r.top;
+            el.style.transform = 'none'; el.style.right = 'auto'; el.style.bottom = 'auto';
+            el.style.left = sl + 'px'; el.style.top = st + 'px'; e.preventDefault();
+          });
+          document.addEventListener('mousemove', function (e) {
+            if (drag) { el.style.left = (sl + e.clientX - sx) + 'px';
+                        el.style.top = (st + e.clientY - sy) + 'px'; }
+          });
+          document.addEventListener('mouseup', function () { drag = false; });
+        });
+      }, 600);
+    });
+    </script>"""
+    m.get_root().html.add_child(folium.Element(drag_js))
+
     # 지도 저장
     import os
     os.makedirs("outputs", exist_ok=True)

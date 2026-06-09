@@ -68,56 +68,91 @@ def create_3d_visualization(dem_lats, dem_lons, dem_array, terrain, full_path,
     """3D plotly 시각화"""
     import plotly.graph_objects as go
 
-    # 경로상 penalty 값으로 색상 정의
+    # 경로 좌표 (위도, 경도, 고도)
     path_coords = np.array([[dem_lats[r, c], dem_lons[r, c], dem_array[r, c]]
                             for r, c in full_path])
-    path_penalties_vals = np.array([p["penalty"] for p in path_penalties])
 
     fig = go.Figure()
 
     # 119 → 착륙지점 비행 경로 (주황 점선, 안전고도)
     if flight_path:
+        def _fl_reason(p):
+            rs = []
+            ws = p.get("wind_speed")
+            if ws is not None and ws > 8:    rs.append(f"강풍 {ws:.0f}m/s")
+            if p.get("is_ridge"):            rs.append("능선 난류")
+            return " · ".join(rs) if rs else "양호(순항)"
+        fl_cd = [[p.get("wind_speed", 0), p.get("wind_dir", 0), p["alt_m"], _fl_reason(p)]
+                 for p in flight_path]
         fig.add_trace(go.Scatter3d(
             x=[p["lon"] for p in flight_path],
             y=[p["lat"] for p in flight_path],
             z=[p["alt_m"] for p in flight_path],
-            mode='lines',
-            line=dict(color='#ff6b35', width=5, dash='dash'),
+            mode='lines+markers',
+            line=dict(color='#ff6b35', width=8), marker=dict(size=3, color='#ff6b35'),
             name='비행 경로 (119→착륙)',
-            hovertemplate='비행<br>고도: %{z:.0f}m<extra></extra>'
+            customdata=fl_cd,
+            hovertemplate=('<b>비행 · %{customdata[3]}</b><br>고도 %{customdata[2]:.0f}m · '
+                           '풍속 %{customdata[0]:.1f}m/s · 풍향 %{customdata[1]:.0f}°<extra></extra>')
         ))
     
-    # DEM 표면
+    # DEM 표면 — x/y는 2D 격자 전체(경도·위도)를 넘겨야 표면이 제대로 렌더됨.
+    #   (이 프로젝트 meshgrid 구조상 dem_lons[0]·dem_lats[:,0]은 상수 배열이라 표면이 뭉침)
     fig.add_trace(go.Surface(
         z=dem_array,
-        x=dem_lons[0],
-        y=dem_lats[:, 0],
-        colorscale='Viridis',
+        x=dem_lons,
+        y=dem_lats,
+        colorscale='Earth',
         name='지형 고도',
-        opacity=0.7
+        opacity=0.78,
+        showscale=False
     ))
     
-    # 경로 (색상: penalty에 따라)
+    # 도보 경로 — 선(회색 베이스) + penalty 구간별 3색 마커 + hover(우회 이유)
+    def _risk_reason(p):
+        parts = []
+        if p["slope"] > 30:      parts.append(f"급경사 {p['slope']:.0f}°")
+        if p["wind_speed"] > 8:  parts.append(f"강풍 {p['wind_speed']:.0f}m/s")
+        if p.get("is_forest"):   parts.append("밀림")
+        if p.get("is_ridge"):    parts.append("능선 난류")
+        return " · ".join(parts) if parts else "양호(저위험)"
+
     fig.add_trace(go.Scatter3d(
-        x=path_coords[:, 1],
-        y=path_coords[:, 0],
-        z=path_coords[:, 2],
-        mode='lines+markers',
-        line=dict(
-            color=path_penalties_vals,
-            colorscale='Reds',
-            showscale=True,
-            colorbar=dict(title="패널티<br>(높을수록<br>위험)")
-        ),
-        marker=dict(size=3),
-        name='구조 경로',
-        hovertemplate='<b>위치</b><br>위도: %{y:.4f}<br>경도: %{x:.4f}<br>고도: %{z:.0f}m<extra></extra>'
-    ))
+        x=path_coords[:, 1], y=path_coords[:, 0], z=path_coords[:, 2],
+        mode='lines', line=dict(color='#555555', width=4),
+        name='도보 경로 (착륙→조난자)', hoverinfo='skip'))
+
+    # penalty 구간: 안전<0.5 / 주의 0.5~0.8 / 위험>0.8 (도보 penalty 실제 분포 반영)
+    bands = [("안전 (패널티<0.5)", "#22c55e", lambda v: v < 0.5),
+             ("주의 (0.5~0.8)",   "#eab308", lambda v: 0.5 <= v < 0.8),
+             ("위험 (>0.8)",       "#ef4444", lambda v: v >= 0.8)]
+    for label, color, cond in bands:
+        idx = [i for i, p in enumerate(path_penalties) if cond(p["penalty"])]
+        if not idx:
+            continue
+        cdata = [[path_penalties[i]["penalty"], path_penalties[i]["slope"],
+                  path_penalties[i]["wind_speed"], path_penalties[i].get("wind_dir", 0),
+                  _risk_reason(path_penalties[i])] for i in idx]
+        fig.add_trace(go.Scatter3d(
+            x=path_coords[idx, 1], y=path_coords[idx, 0], z=path_coords[idx, 2],
+            mode='markers', marker=dict(size=6, color=color),
+            name=label, customdata=cdata,
+            hovertemplate=('<b>%{customdata[4]}</b><br>패널티 %{customdata[0]:.2f}<br>'
+                           '경사 %{customdata[1]:.0f}° · 풍속 %{customdata[2]:.1f}m/s · '
+                           '풍향 %{customdata[3]:.0f}°<extra></extra>')))
     
     # 119 센터
     fire_row, fire_col = latlon_to_grid(fire_station["latitude"], fire_station["longitude"],
                                          dem_lats, dem_lons)
     fire_z = dem_array[fire_row, fire_col]
+    # 이륙선: 119 지면 → 비행 시작 고도 (마커와 비행경로가 끊겨 보이지 않도록 연결)
+    if flight_path:
+        fig.add_trace(go.Scatter3d(
+            x=[fire_station["longitude"], flight_path[0]["lon"]],
+            y=[fire_station["latitude"], flight_path[0]["lat"]],
+            z=[float(fire_z), flight_path[0]["alt_m"]],
+            mode='lines', line=dict(color='#ff6b35', width=5, dash='dot'),
+            name='이륙', showlegend=False, hoverinfo='skip'))
     fig.add_trace(go.Scatter3d(
         x=[fire_station["longitude"]],
         y=[fire_station["latitude"]],
@@ -128,14 +163,19 @@ def create_3d_visualization(dem_lats, dem_lons, dem_array, terrain, full_path,
         hovertext=f"{fire_station['name']}"
     ))
     
-    # 착륙지점
+    # 구조 지점 — 전술(mode)에 따라 라벨/심볼 구분 (landing=착륙, hoist=호이스트)
+    _mode = str(landing_point.get("mode", ""))
+    if "hoist" in _mode:
+        spot_name, spot_symbol = "호이스트 지점", "circle"
+    else:
+        spot_name, spot_symbol = "착륙 지점", "square"
     fig.add_trace(go.Scatter3d(
         x=[landing_point["longitude"]],
         y=[landing_point["latitude"]],
         z=[dem_array[int(landing_point["row"]), int(landing_point["col"])]],
         mode='markers',
-        marker=dict(size=15, color='blue', symbol='square'),
-        name='호이스트 착륙지점'
+        marker=dict(size=15, color='blue', symbol=spot_symbol),
+        name=spot_name
     ))
     
     # 조난자 위치
@@ -151,25 +191,49 @@ def create_3d_visualization(dem_lats, dem_lons, dem_array, terrain, full_path,
         name='조난자'
     ))
     
+    # z축 상한 = 지형 최대고도와 비행 순항고도 중 큰 값(+여유) → 비행경로 클리핑 방지
+    _z_top = float(np.nanmax(dem_array))
+    if flight_path:
+        _z_top = max(_z_top, max(p["alt_m"] for p in flight_path))
+    _z_top *= 1.05
+
     fig.update_layout(
-        title='3D 산악 구조 경로 시각화<br><sub>색상: 경사도/풍속/숲 패널티의 합산</sub>',
+        title=dict(
+            text='3D 산악 구조 경로 시각화<br><sub>설악산 지형 · 비행경로(119→착륙) · 도보경로(착륙→조난자)</sub>',
+            x=0.5, xanchor='center', font=dict(size=20)
+        ),
         scene=dict(
             xaxis_title='경도 (°E)',
             yaxis_title='위도 (°N)',
-            zaxis_title='고도 (m)',
-            camera=dict(
-                eye=dict(x=1.5, y=1.5, z=1.3)
-            )
+            # z축 범위를 비행 순항고도까지 확장 → 비행경로가 잘리지 않고 전부 보임
+            zaxis=dict(title='고도 (m)', range=[0, _z_top]),
+            aspectratio=dict(x=1, y=1, z=0.5),   # 지형 입체감(수직 강조 과대 방지)
+            camera=dict(eye=dict(x=1.7, y=1.7, z=1.0))
         ),
-        width=1200,
-        height=800,
-        showlegend=True
+        # 범례를 좌상단 안쪽으로 배치 + 반투명 배경 → 마커/컬러바와 겹침 해소
+        legend=dict(
+            x=0.01, y=0.98, xanchor='left', yanchor='top',
+            bgcolor='rgba(255,255,255,0.7)', bordercolor='#cccccc', borderwidth=1,
+            font=dict(size=12)
+        ),
+        margin=dict(l=0, r=0, t=70, b=0),
+        width=1200, height=800, showlegend=True
     )
     
     import os
     os.makedirs("outputs", exist_ok=True)
     fig.write_html("outputs/output_map_3d.html")
     print("3D 지도 저장: outputs/output_map_3d.html")
+
+    # 발표용 정적 3D 이미지(PNG) — VWorld 대체. kaleido 미설치 시 graceful skip.
+    try:
+        fig.write_image("outputs/output_map_3d.png", width=1600, height=900, scale=2)
+        print("3D 이미지 저장: outputs/output_map_3d.png (발표용)")
+    except Exception as e:
+        print(f"  [건너뜀] 3D PNG — {e} (pip install kaleido 시 생성)")
+
+    return fig   # 인터랙티브(회전/줌) 표시용 — Gradio gr.Plot 등에서 사용
+
 
 def create_2d_visualization(path, victim_gps, landing_point, wind_field, dem_lats, dem_lons,
                            path_penalties, flight_path=None):
@@ -233,10 +297,11 @@ def create_2d_visualization(path, victim_gps, landing_point, wind_field, dem_lat
         icon=folium.Icon(color="red", icon="exclamation-sign")
     ).add_to(m)
     
-    # 착륙지점 마커
+    # 구조 지점 마커 — 전술(mode)에 따라 라벨 구분
+    _spot2d = "호이스트 지점" if "hoist" in str(landing_point.get("mode", "")) else "착륙 지점"
     folium.Marker(
         location=[landing_point["latitude"], landing_point["longitude"]],
-        popup=f"호이스트 착륙지점\n거리: {landing_point['distance_m']:.0f}m",
+        popup=f"{_spot2d}\n거리: {landing_point['distance_m']:.0f}m",
         icon=folium.Icon(color="blue", icon="helicopter")
     ).add_to(m)
     
@@ -427,7 +492,8 @@ def stage3_path_modeling(victim_gps, destination, grid_bundle, heli_size=HELI_SI
                                   margin_m=FLIGHT_MARGIN_M, size=heli_size)
     if heli_grid:
         flight_path = flight_path_from_grid(heli_grid, dem_lats, dem_lons, dem_array,
-                                            margin_m=FLIGHT_MARGIN_M)
+                                            margin_m=FLIGHT_MARGIN_M,
+                                            wind_field=wind_field, terrain=terrain)
     else:
         print("  [폴백] 비행 A* 실패 → 직선 비행경로 사용")
         flight_path = make_flight_path(
@@ -454,15 +520,17 @@ def stage3_path_modeling(victim_gps, destination, grid_bundle, heli_size=HELI_SI
     for r, c in full_path:
         slope = terrain["slope"][r, c]
         ws = wind_field["ws"][r, c]
+        # 풍향(불어오는 방향, deg): wind_field의 흐름벡터 u,v로 역산
+        wd = float(np.degrees(np.arctan2(-wind_field["u"][r, c], -wind_field["v"][r, c])) % 360)
         is_forest = terrain["is_open"][r, c] == 0
         is_ridge = terrain["is_ridge"][r, c]
         penalty  = (slope / 45.0) ** 1.5 * 0.6
         penalty += min(ws, 15.0) / 15.0 * 0.3
         penalty += (0.5 if is_forest else 0)
         penalty += (0.3 if is_ridge else 0)
-        path_penalties.append({"row": r, "col": c, "slope": slope, "wind_speed": ws,
-                               "is_forest": is_forest, "is_ridge": is_ridge,
-                               "penalty": penalty})
+        path_penalties.append({"row": r, "col": c, "slope": float(slope), "wind_speed": float(ws),
+                               "wind_dir": wd, "is_forest": bool(is_forest), "is_ridge": bool(is_ridge),
+                               "penalty": float(penalty)})
 
     eta_min = estimate_path_time(full_path, terrain, dem_lats, dem_lons)
     from config import HELI_CRUISE_SPEED_MS

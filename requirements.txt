@@ -5,3 +5,8 @@ requests
 folium
 python-dotenv
 scikit-learn
+xgboost
+pyarrow
+plotly
+kaleido
+gradio

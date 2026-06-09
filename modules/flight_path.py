@@ -126,29 +126,56 @@ def estimate_flight_time(flight_path: list[dict], cruise_speed_ms: float) -> flo
 
 
 def flight_path_from_grid(grid_path, dem_lats, dem_lons, dem_array,
-                          margin_m: float = DEFAULT_MARGIN_M) -> list[dict]:
+                          margin_m: float = DEFAULT_MARGIN_M,
+                          wind_field=None, terrain=None) -> list[dict]:
     """
     A* 비행 격자 경로 [(row, col), ...] → 비행 경로 dict 리스트.
-    고도는 지형추종(셀 지형고도 + margin_m), 거리는 누적 haversine.
+
+    고도는 '지형추종'이 아니라 **순항고도 일정(전 구간 최고 지형 + margin) + 이착륙 ramp**.
+      - 실제 산악구조 헬기는 능선을 따라 오르락내리락하지 않고, 안전 순항고도로
+        평평하게 비행한다(이동 구간). 양 끝만 상승/하강 램프로 표현.
+      - 평면 경로(lat/lon)는 A* 결과 그대로 유지.
 
     Returns:
         [{"lat", "lon", "alt_m", "terrain_m", "dist_m"}, ...]
     """
+    n = len(grid_path)
+    if n == 0:
+        return []
+    lats  = [float(dem_lats[r, c]) for (r, c) in grid_path]
+    lons  = [float(dem_lons[r, c]) for (r, c) in grid_path]
+    terrs = [float(dem_array[r, c]) for (r, c) in grid_path]
+
+    cruise_alt = max(terrs) + margin_m              # 전 구간 최고 지형 + 마진 = 순항고도
+    altitudes = [cruise_alt] * n
+    ramp = max(1, n // 7)                            # 양 끝 ~15% 구간을 이착륙 램프로
+    start_base = terrs[0] + margin_m * 0.3
+    end_base   = terrs[-1] + margin_m * 0.3
+    for i in range(min(ramp, n)):
+        t = (i + 1) / (ramp + 1)
+        altitudes[i]      = start_base + (cruise_alt - start_base) * t   # 이륙 상승
+        altitudes[-1 - i] = end_base + (cruise_alt - end_base) * t       # 착륙 하강
+
     pts = []
     cum = 0.0
     prev = None
-    for (r, c) in grid_path:
-        lat = float(dem_lats[r, c])
-        lon = float(dem_lons[r, c])
-        terr = float(dem_array[r, c])
+    for i in range(n):
+        r, c = grid_path[i]
         if prev is not None:
-            cum += haversine(prev[0], prev[1], lat, lon)
-        pts.append({
-            "lat": lat,
-            "lon": lon,
-            "alt_m": terr + margin_m,
-            "terrain_m": terr,
+            cum += haversine(prev[0], prev[1], lats[i], lons[i])
+        d = {
+            "lat": lats[i], "lon": lons[i],
+            "alt_m": float(altitudes[i]),
+            "terrain_m": terrs[i],
             "dist_m": cum,
-        })
-        prev = (lat, lon)
+        }
+        # 비행 우회 이유용: 풍속·풍향·능선 난류 (있으면 주입)
+        if wind_field is not None:
+            d["wind_speed"] = float(wind_field["ws"][r, c])
+            u, v = float(wind_field["u"][r, c]), float(wind_field["v"][r, c])
+            d["wind_dir"] = float(np.degrees(np.arctan2(-u, -v)) % 360)
+        if terrain is not None and "is_ridge" in terrain:
+            d["is_ridge"] = bool(terrain["is_ridge"][r, c])
+        pts.append(d)
+        prev = (lats[i], lons[i])
     return pts
