@@ -7,3 +7,6 @@ data/
 *.csv
 *.joblib
 *.ubj
+AGENTS.md
+_pdf_tmp/
+outputs/
