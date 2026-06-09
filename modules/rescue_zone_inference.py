@@ -181,16 +181,37 @@ def _series_to_zone(s) -> dict:
         "latitude":   float(s["latitude"]),
         "longitude":  float(s["longitude"]),
         "mode":       str(s["mode"]),
-        "score":      float(s["risk_score"]),
+        "score":      float(s["suitability_score"]),   # 적합도(높을수록 안전/적합)
         "risk_class": int(s["risk_class"]),
         "wind_speed": float(s["wind_speed"]),
         "distance_m": float(s["dist_to_rescue_m"]),
     }
 
 
-def _compute_best_per_tactic(gps_coord: dict, heli_size: str = "small",
-                             radius_m: float = 500.0):
-    """반경 내 후보로 landing/hoist 각 best(Series)를 산출. 후보 없으면 {} 반환."""
+def _filter_spatial_diversity(sorted_df: pd.DataFrame, top_n: int = 3,
+                              min_sep_deg: float = 0.000455):
+    """정렬된 후보에서 서로 min_sep_deg(≈50m) 이상 떨어진 top_n개 선정(Series 리스트).
+
+    3.xgb_inference.find_best_rescue_tactics의 공간 다각화 필터와 동일 로직 —
+    동일 군집 1·2·3순위가 한 점에 뭉치는 것을 막아 '대체 후보'로서 의미를 갖게 한다.
+    """
+    selected = []
+    for _, row in sorted_df.iterrows():
+        if all(np.hypot(row["latitude"] - s["latitude"],
+                        row["longitude"] - s["longitude"]) >= min_sep_deg
+               for s in selected):
+            selected.append(row)
+        if len(selected) == top_n:
+            break
+    return selected
+
+
+def _compute_ranked_per_tactic(gps_coord: dict, heli_size: str = "small",
+                               radius_m: float = 500.0, top_n: int = 3):
+    """반경 내 후보로 landing/hoist 각 top_n 순위(Series 리스트)를 산출.
+
+    공간 다각화(50m 이격) 적용 후 최대 top_n개. 후보 없으면 {} 반환.
+    """
     if heli_size not in ("small", "large"):
         raise ValueError("heli_size must be 'small' or 'large'")
 
@@ -224,7 +245,7 @@ def _compute_best_per_tactic(gps_coord: dict, heli_size: str = "small",
     cand["wind_dir_sin"] = np.sin(wd_rad).astype("float32")
     cand["wind_dir_cos"] = np.cos(wd_rad).astype("float32")
 
-    # 동적 점수(풍속/풍향) → 실제 Risk Score 합산용
+    # 동적 점수(풍속/풍향) → 적합도(suitability) 합산용
     #   wind_score는 3.xgb_inference와 정합되도록 '기종별' 임계 적용
     #   (항공안전법 별표24 기반: 소형 10 / 대형 20 m/s 한계. 학습 타겟용
     #    score_utils.compute_wind_score(기종무관)와 달리 추론 점수에만 기종별 적용)
@@ -246,7 +267,7 @@ def _compute_best_per_tactic(gps_coord: dict, heli_size: str = "small",
     cand["aero_risk"]       = (cand["elevation"] * cand["wind_speed"]).astype("float32")
     cand["slope_wind_risk"] = (cand["slope_deg"] * cand["wind_speed"]).astype("float32")
 
-    # ── 3) XGBoost 추론 (landing/hoist) + Risk Score 산출 ───────────────────
+    # ── 3) XGBoost 추론 (landing/hoist) + 적합도(suitability) 산출 ───────────
     models = _load_models(heli_size)
 
     best_per_tactic = {}
@@ -256,7 +277,7 @@ def _compute_best_per_tactic(gps_coord: dict, heli_size: str = "small",
 
         # [nan 방어] static_score(지형 기본점수)가 비어있는(nan) 후보 제외.
         #   terrain_base.parquet의 static_score는 일부(약 45%)가 nan이라,
-        #   미처리 시 risk_score=nan이 best로 섞여 결과가 오염될 수 있음.
+        #   미처리 시 suitability_score=nan이 best로 섞여 결과가 오염될 수 있음.
         if score_col in cand.columns:
             valid = cand[cand[score_col].notna()].copy()
         else:
@@ -268,26 +289,37 @@ def _compute_best_per_tactic(gps_coord: dict, heli_size: str = "small",
         pred = models[tactic].predict(dmat)
         risk_class = pred.argmax(axis=1) if pred.ndim == 2 else pred.astype(int)
 
+        # 적합도 점수(suitability): 좋은 성분(완경사·희박임목·약풍·정풍)의 양(+) 합 →
+        #   '높을수록 안전/적합'. (위험도 아님. score_utils.compute_targets와 동일 정의)
         d = TACTIC_WEIGHTS[key]["dynamic"]
-        risk_score = (valid[score_col].values
-                      + valid["wind_score"].values * d["wind_score"]
-                      + valid["wind_dir_score"].values * d["wind_dir_score"])
+        suitability_score = (valid[score_col].values
+                             + valid["wind_score"].values * d["wind_score"]
+                             + valid["wind_dir_score"].values * d["wind_dir_score"])
 
         sub = pd.DataFrame({
             "latitude": valid["latitude"].values,
             "longitude": valid["longitude"].values,
             "dist_to_rescue_m": valid["dist_to_rescue_m"].values,
             "wind_speed": valid["wind_speed"].values,
-            "risk_class": risk_class,
-            "risk_score": risk_score,
+            "risk_class": risk_class,                 # 0/1/2 = 안전/주의/위험(진짜 위험 분류)
+            "suitability_score": suitability_score,   # 연속 적합도(높을수록 적합)
             "mode": key,
         })
-        # 안전등급(오름차순) → Risk Score(내림차순) → 거리(오름차순)
-        sub = sub.sort_values(["risk_class", "risk_score", "dist_to_rescue_m"],
+        # 안전등급(오름차순) → 적합도(내림차순=높은 게 우선) → 거리(오름차순)
+        sub = sub.sort_values(["risk_class", "suitability_score", "dist_to_rescue_m"],
                               ascending=[True, False, True])
-        best_per_tactic[tactic] = sub.iloc[0]
+        ranked = _filter_spatial_diversity(sub, top_n=top_n)
+        if ranked:
+            best_per_tactic[tactic] = ranked   # Series 리스트(최대 top_n)
 
     return best_per_tactic
+
+
+def _compute_best_per_tactic(gps_coord: dict, heli_size: str = "small",
+                             radius_m: float = 500.0):
+    """반경 내 후보로 landing/hoist 각 best(1순위 Series)만 산출. 후보 없으면 {} 반환."""
+    ranked = _compute_ranked_per_tactic(gps_coord, heli_size, radius_m, top_n=1)
+    return {t: lst[0] for t, lst in ranked.items() if lst}
 
 
 def infer_best_zone(gps_coord: dict, heli_size: str = "small",
@@ -323,3 +355,25 @@ def infer_tactics(gps_coord: dict, heli_size: str = "small",
     if not bpt:
         return None
     return {t: _series_to_zone(s) for t, s in bpt.items()}
+
+
+def infer_tactics_ranked(gps_coord: dict, heli_size: str = "small",
+                         radius_m: float = 500.0, top_n: int = 3):
+    """착륙(A안)·호이스트(B안) 각 1~top_n 순위 목록 — 3.xgb_inference의 '최대 3순위' 출력 방식.
+
+    공간 다각화(50m 이격) 적용. 각 zone에 1-base 'rank' 키를 부여한다.
+
+    Returns: {"landing": [zone(rank=1), zone(rank=2), ...], "hoist": [...]} 또는 None(후보 전무).
+    """
+    ranked = _compute_ranked_per_tactic(gps_coord, heli_size, radius_m, top_n=top_n)
+    if not ranked:
+        return None
+    out = {}
+    for tactic, series_list in ranked.items():
+        zones = []
+        for i, s in enumerate(series_list, 1):
+            z = _series_to_zone(s)
+            z["rank"] = i
+            zones.append(z)
+        out[tactic] = zones
+    return out

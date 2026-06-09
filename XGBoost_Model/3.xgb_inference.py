@@ -256,80 +256,20 @@ def find_best_rescue_tactics(rescue_lat: float, rescue_lon: float,
 # [실행부 1] 무작위 조난 지점 샘플링 후 10회 연속 자동 검증 시뮬레이션
 # ==============================================================================
 print("\n" + "="*70)
-print("🚀 [연속 시뮬레이션 가동] 무작위 조난 지점 10회 연속 검증을 시작합니다.")
+print("무작위 조난 지점 검증을 시작합니다.")
 print("="*70)
-
-for i in range(1, 11):
-    print(f"\n✨ [테스트 시뮬레이션 {i} / 10 회차] 작전 전술 탐색 개시")
-    print("-" * 75)
+print(f"\n테스트 시뮬레이션 작전 전술 탐색 개시")
+print("-" * 75)
     
-    sample_rescue_point = df_master.sample(1)
-    example_lat = sample_rescue_point['latitude'].values[0]
-    example_lon = sample_rescue_point['longitude'].values[0]
+sample_rescue_point = df_master.sample(1)
+example_lat = sample_rescue_point['latitude'].values[0]
+example_lon = sample_rescue_point['longitude'].values[0]
 
-    print(f"➔ 샘플링된 무작위 조난자 좌표: 위도 {example_lat:.5f}, 경도 {example_lon:.5f}")
+print(f"➔ 샘플링된 무작위 조난자 좌표: 위도 {example_lat:.5f}, 경도 {example_lon:.5f}")
 
-    l_spots, h_spots = find_best_rescue_tactics(
-        rescue_lat=example_lat,
-        rescue_lon=example_lon,
-        heli_type=deployed_heli,
-        search_radius_meters=500
-    )
-
-
-# ==============================================================================
-# 🎯 [STEP 4 추가] 하드코어 극한 상황(Stress Test) 데이터 강제 주입 검증 레이어
-# ==============================================================================
-print("\n\n" + "🔥" * 30)
-print("🚨 [AI 시스템 예외 신뢰성 테스트] 최악의 기상/지형 극한 상황 강제 인젝션 검증")
-print("🔥" * 30)
-
-# 1. 최악의 가상 격자 1행 생성 (소형 기체 제한 초과 강풍 + 역풍 + 수직절벽 + 밀집림)
-stress_grid = pd.DataFrame([{
-    'elevation': 1300.0,      # 초고고도 (점수 0.35)
-    'slope_deg': 2,           # 절벽 지형 (점수 0.35)
-    'tree_density': 3,        # 초밀집림 (점수 0.00)
-    'tree_height': 2,         # 최고조 수목 (점수 0.31)
-    'wind_speed': 12.0,       # 돌풍 (소형 한계 10m/s 초과 -> 점수 0.00)
-    'wind_dir_sin': 0.0,      
-    'wind_dir_cos': -1.0,     # 강한 정면 역풍 (점수 0.00)
-    'land_0': 0, 'land_1': 0, 'land_2': 0,
-    # 파생 피처 동적 고차원 투영
-    'tree_risk': 3 * 2,
-    'aero_risk': 1300.0 * 12.0,
-    'slope_wind_risk': 2 * 12.0
-}])
-
-# 2. 규칙 기반 전술 스코어 역산 연산 (Small 헬기 기준 명시적 수식 정밀 계산)
-if deployed_heli == "small":
-    calc_landing_score = (0.35 * 0.42) + (0.00 * 0.10) + (0.31 * 0.08) + (0.00 * 0.20) + (0.00 * 0.12) + (0.35 * 0.08)
-    calc_hoist_score   = (0.35 * 0.12) + (0.00 * 0.15) + (0.31 * 0.20) + (0.00 * 0.30) + (0.00 * 0.15) + (0.35 * 0.08)
-else: # 대형 헬기 제원 매핑
-    calc_landing_score = (0.35 * 0.46) + (0.00 * 0.14) + (0.31 * 0.08) + (0.00 * 0.12) + (0.00 * 0.08) + (0.35 * 0.12)
-    calc_hoist_score   = (0.35 * 0.10) + (0.00 * 0.24) + (0.31 * 0.18) + (0.00 * 0.18) + (0.00 * 0.12) + (0.35 * 0.18)
-
-# 3. XGBoost GPU 텐서 추론 가동
-X_stress = stress_grid[feature_columns].astype(np.float32)
-d_stress = xgb.DMatrix(X_stress)
-
-prob_stress_l = models["landing"].predict(d_stress)
-prob_stress_h = models["hoist"].predict(d_stress)
-
-pred_stress_l = np.argmax(prob_stress_l, axis=1)[0]
-pred_stress_h = np.argmax(prob_stress_h, axis=1)[0]
-
-target_labels = {0: "Safe (안전 - 작전 가능)", 1: "Caution (주의 - 조건부 가능)", 2: "Danger (위험 - 작전 절대 불가)"}
-
-# 4. 모니터 스크린 출력 결착
-print(f"\n[실황 주입 매산] 기종 제원: 【 {heli_kor_name} 】")
-print(f" ➔ 수치 실황 - 고도: 1,300m | 경도코드: 2 | 수목밀도코드: 3 | 풍속: 12.0m/s (한계 이탈)")
-print("-" * 75)
-print(f" ➔ [A안 기체안착] 정량 규칙 스코어: {calc_landing_score:.4f} 점")
-print(f" ➔ [A안 기체안착] XGBoost AI 판단 등급: 【 {target_labels[pred_stress_l]} 】 (확률: {prob_stress_l[0][pred_stress_l]:.4f})")
-print("-" * 75)
-print(f" ➔ [B안 호이스트] 정량 규칙 스코어: {calc_hoist_score:.4f} 점")
-print(f" ➔ [B안 호이스트] XGBoost AI 판단 등급: 【 {target_labels[pred_stress_h]} 】 (확률: {prob_stress_h[0][pred_stress_h]:.4f})")
-print("-" * 75)
-print("💡 [검증 매듭] 소형 기종의 하드웨어 한계를 넘긴 기상 조건에서 규칙 스코어가 최하점(0.1점대)으로")
-print("   폭락하고, AI가 안전 마진 상실을 인지해 'Danger(위험)'를 무결하게 방어 표출함을 입증 완료했습니다.")
-print("="*70)
+l_spots, h_spots = find_best_rescue_tactics(
+    rescue_lat=example_lat,
+    rescue_lon=example_lon,
+    heli_type=deployed_heli,
+    search_radius_meters=500
+)

@@ -90,7 +90,7 @@ def select_rescue_zone(gps_coord, grid_data, heli_size="small"):
 
         risk_label = {0: "안전", 1: "주의", 2: "위험"}.get(zone["risk_class"], "?")
         print(f"  • [AI] 모드={zone['mode']} | 안전등급={risk_label}({zone['risk_class']}) "
-              f"| RiskScore={zone['score']:.3f} | 풍속={zone['wind_speed']:.1f}m/s")
+              f"| 적합도={zone['score']:.3f} | 풍속={zone['wind_speed']:.1f}m/s")
         print(f"  • 반환(목적지 노드): ({dest_lat:.5f}, {dest_lon:.5f}) "
               f"grid=({r},{c}), 조난자까지 {dist_m:.0f}m")
         return {

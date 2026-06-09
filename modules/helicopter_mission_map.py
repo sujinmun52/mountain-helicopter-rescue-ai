@@ -10,13 +10,15 @@ def create_helicopter_mission_folium_map(full_path, dem_lats, dem_lons, dem_arra
                                         fire_station, landing_point, victim_gps, terrain,
                                         flight_path=None,
                                         flight_eta_min=None, walk_eta_min=None,
-                                        transit_eta_min=None):
+                                        transit_eta_min=None, alt_points=None):
     """
     Folium을 사용한 헬기 미션 플래닝 지도
     실제 지형 기반 패널티 시각화
 
     flight_path: 119 → 착륙지점 비행 경로 [{lat, lon, alt_m, ...}]. 주황 점선으로 표시.
     flight_eta_min / walk_eta_min / transit_eta_min: 미션 ETA(분). None이면 범례 ETA 박스 생략.
+    alt_points: 2·3순위 대체 구조 후보 [{latitude, longitude, rank, score, distance_m, ...}].
+                우상단 레이어 토글(기본 숨김)로 켜고 끌 수 있는 별도 레이어에 표시.
     """
 
     # 중심점 설정
@@ -141,7 +143,25 @@ def create_helicopter_mission_folium_map(full_path, dem_lats, dem_lons, dem_arra
         icon=folium.Icon(color='red', icon='exclamation-sign', prefix='glyphicon'),
         tooltip="조난자"
     ).add_to(m)
-    
+
+    # ===== 2·3순위 대체 후보 (우상단 레이어 토글로 켜고 끔, 기본 숨김) =====
+    if alt_points:
+        _alt_label = "호이스트" if "hoist" in str(landing_point.get("mode", "")) else "착륙"
+        alt_fg = folium.FeatureGroup(name=f"2·3순위 {_alt_label} 대체 후보", show=False)
+        for a in alt_points:
+            rank = a.get("rank", "?")
+            folium.Marker(
+                location=[a["latitude"], a["longitude"]],
+                popup=(f"<b>🔷 {rank}순위 대체 {_alt_label} 후보</b><br>"
+                       f"위도: {a['latitude']:.4f}°<br>경도: {a['longitude']:.4f}°<br>"
+                       f"<hr>적합도: {a.get('score', 0):.3f}<br>"
+                       f"조난자까지: {a.get('distance_m', 0):.0f}m"),
+                icon=folium.Icon(color='purple', icon='plus', prefix='glyphicon'),
+                tooltip=f"{rank}순위 대체 · 조난자까지 {a.get('distance_m', 0):.0f}m"
+            ).add_to(alt_fg)
+        alt_fg.add_to(m)
+        folium.LayerControl(position='topright', collapsed=False).add_to(m)
+
     # ===== 거리 원 추가 =====
     # 119센터 기준 활동 반경 표시
     folium.Circle(
@@ -165,9 +185,9 @@ def create_helicopter_mission_folium_map(full_path, dem_lats, dem_lons, dem_arra
     
     # 범례 및 통계 추가
     legend_html = f"""
-    <div style="position: fixed; 
-                bottom: 50px; right: 50px; width: 320px; height: auto;
-                background-color: white; border:2px solid grey; z-index:9999; 
+    <div style="position: fixed;
+                top: 60px; left: 12px; width: 320px; max-height: 80vh; overflow-y: auto;
+                background-color: white; border:2px solid grey; z-index:9999;
                 font-size:14px; padding: 15px; border-radius: 8px;
                 box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
         <div style="font-weight: bold; margin-bottom: 10px; color: #ff6b35; font-size: 16px;">

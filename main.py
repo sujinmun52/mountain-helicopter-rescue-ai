@@ -64,8 +64,12 @@ def load_seorak_data():
 
 def create_3d_visualization(dem_lats, dem_lons, dem_array, terrain, full_path,
                            path_penalties, fire_station, landing_point, victim_gps,
-                           flight_path=None):
-    """3D plotly 시각화"""
+                           flight_path=None, alt_points=None):
+    """3D plotly 시각화.
+
+    alt_points: 2·3순위 대체 구조 후보 [{latitude, longitude, row, col, rank, mode, ...}].
+                범례에서 토글(기본 숨김 'legendonly')하는 별도 트레이스로 표시.
+    """
     import plotly.graph_objects as go
 
     # 경로 좌표 (위도, 경도, 고도)
@@ -175,9 +179,33 @@ def create_3d_visualization(dem_lats, dem_lons, dem_array, terrain, full_path,
         z=[dem_array[int(landing_point["row"]), int(landing_point["col"])]],
         mode='markers',
         marker=dict(size=15, color='blue', symbol=spot_symbol),
-        name=spot_name
+        name=f"{spot_name} (1순위 · {landing_point.get('distance_m', 0):.0f}m)",
+        hovertext=f"1순위 · 조난자까지 {landing_point.get('distance_m', 0):.0f}m",
+        hoverinfo='text'
     ))
-    
+
+    # 2·3순위 대체 후보 — 외부 버튼으로 토글(기본 '표시'). 범례에는 넣지 않아
+    #   클릭 가능 여부가 헷갈리지 않게 한다. _alt_idx로 버튼 restyle 타겟을 지정.
+    _alt_idx = None
+    if alt_points:
+        _alt_label = "호이스트" if "hoist" in _mode else "착륙"
+        _alt_idx = len(fig.data)
+        fig.add_trace(go.Scatter3d(
+            x=[a["longitude"] for a in alt_points],
+            y=[a["latitude"] for a in alt_points],
+            z=[dem_array[int(a["row"]), int(a["col"])] for a in alt_points],
+            mode='markers',
+            marker=dict(size=11, color='#7c3aed', symbol=spot_symbol,
+                        line=dict(color='white', width=1)),
+            customdata=[[a.get("rank", 0), a.get("score", 0),
+                         a.get("distance_m", 0)] for a in alt_points],
+            name=f"{_alt_label} 2·3순위 (대체)",
+            visible=True, showlegend=False,     # 기본 표시 · 범례 제외(버튼으로만 제어)
+            hovertemplate=('<b>%{customdata[0]}순위 대체 후보</b><br>'
+                           '적합도 %{customdata[1]:.3f} · 조난자까지 %{customdata[2]:.0f}m'
+                           '<extra></extra>')
+        ))
+
     # 조난자 위치
     victim_row, victim_col = latlon_to_grid(victim_gps["latitude"], victim_gps["longitude"],
                                              dem_lats, dem_lons)
@@ -208,7 +236,8 @@ def create_3d_visualization(dem_lats, dem_lons, dem_array, terrain, full_path,
             # z축 범위를 비행 순항고도까지 확장 → 비행경로가 잘리지 않고 전부 보임
             zaxis=dict(title='고도 (m)', range=[0, _z_top]),
             aspectratio=dict(x=1, y=1, z=0.5),   # 지형 입체감(수직 강조 과대 방지)
-            camera=dict(eye=dict(x=1.7, y=1.7, z=1.0))
+            camera=dict(eye=dict(x=1.7, y=1.7, z=1.0)),
+            dragmode='turntable'                 # 기본 드래그=회전(버튼으로 pan 전환)
         ),
         # 범례를 좌상단 안쪽으로 배치 + 반투명 배경 → 마커/컬러바와 겹침 해소
         legend=dict(
@@ -219,7 +248,7 @@ def create_3d_visualization(dem_lats, dem_lons, dem_array, terrain, full_path,
         margin=dict(l=0, r=0, t=70, b=0),
         width=1200, height=800, showlegend=True
     )
-    
+
     import os
     os.makedirs("outputs", exist_ok=True)
     fig.write_html("outputs/output_map_3d.html")
